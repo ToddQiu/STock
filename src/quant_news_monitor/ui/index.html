@@ -1,0 +1,1257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>STock</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg?v=stock-20261011">
+  <link rel="shortcut icon" type="image/svg+xml" href="/logo.svg?v=stock-20261011">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/workbench.css">
+  <link rel="stylesheet" href="/annotations.css">
+  <link rel="stylesheet" href="/indices.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到内容</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="window-identity">
+        <div id="window-controls" class="window-controls" role="group" aria-label="窗口控制" hidden>
+          <button type="button" class="window-control window-close" data-window-action="close" aria-label="关闭窗口" title="关闭窗口"><span data-ui-icon="x" aria-hidden="true"></span></button>
+          <button type="button" class="window-control window-minimize" data-window-action="minimize" aria-label="最小化窗口" title="最小化窗口"><span data-ui-icon="minus" aria-hidden="true"></span></button>
+          <button type="button" class="window-control window-maximize" data-window-action="toggleMaximize" aria-label="最大化窗口" title="最大化窗口"><span data-ui-icon="plus" aria-hidden="true"></span></button>
+        </div>
+        <div class="brand">
+          <img class="brand-mark" src="/logo.svg?v=stock-20261011" alt="" aria-hidden="true">
+          <strong>STock</strong>
+        </div>
+      </div>
+      <div class="page-heading">
+        <p id="page-eyebrow">市场情报</p>
+        <h1 id="page-title">监测总览</h1>
+      </div>
+      <div class="topbar-actions">
+        <div class="auto-control">
+          <div>
+            <span>新闻自动监测</span>
+            <small id="auto-caption">已关闭</small>
+          </div>
+          <label class="switch" title="仅控制股票新闻轮询；行情与社交采集有独立调度">
+            <input type="checkbox" id="auto-toggle" aria-label="新闻自动监测">
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <button class="secondary-button" id="manual-news-button" type="button" title="添加消息" aria-label="添加消息"><span aria-hidden="true" data-ui-icon="plus"></span><span class="window-action-label">添加消息</span></button>
+        <button class="primary-button" id="scan-button" type="button" title="立即检测" aria-label="立即检测"><span class="scan-symbol" aria-hidden="true" data-ui-icon="refresh-cw"></span><span class="window-action-label">立即检测</span></button>
+      </div>
+    </header>
+    <aside class="sidebar" aria-label="主导航">
+      <nav class="nav-list">
+        <button class="nav-item active" data-view-target="overview" type="button">
+          <span class="nav-icon" data-ui-icon="house" aria-hidden="true"></span><span>总览</span>
+        </button>
+        <button class="nav-item" data-view-target="portfolio" type="button">
+          <span class="nav-icon" data-ui-icon="wallet" aria-hidden="true"></span><span>我的资产</span>
+        </button>
+        <details class="nav-market" id="nav-market">
+          <summary class="nav-item" aria-controls="market-nav"><span class="nav-icon" data-ui-icon="chart-no-axes-combined" aria-hidden="true"></span><span>市场监测</span></summary>
+          <div id="market-nav" class="nav-sublist">
+        <button class="nav-item" data-view-target="signals" type="button">
+          <span class="nav-icon" data-ui-icon="activity" aria-hidden="true"></span><span>事件中心</span>
+        </button>
+        <button class="nav-item" data-view-target="social" type="button">
+          <span class="nav-icon" data-ui-icon="message-circle" aria-hidden="true"></span><span>情绪仪表盘</span>
+        </button>
+        <button class="nav-item" data-view-target="assets" type="button">
+          <span class="nav-icon" data-ui-icon="chart-no-axes-combined" aria-hidden="true"></span><span>黄金/BTC/原油/美债</span>
+        </button>
+        <button class="nav-item" data-view-target="indices" type="button">
+          <span class="nav-icon" data-ui-icon="chart-no-axes-combined" aria-hidden="true"></span><span>四大指数</span>
+        </button>
+        <button class="nav-item" data-view-target="watchlist" type="button">
+          <span class="nav-icon" data-ui-icon="list-filter" aria-hidden="true"></span><span>股票池</span>
+        </button>
+          </div>
+        </details>
+        <details class="nav-market" id="nav-research">
+          <summary class="nav-item" aria-controls="research-tabs"><span class="nav-icon" data-ui-icon="notebook-pen" aria-hidden="true"></span><span>研究复盘</span></summary>
+          <div id="research-tabs" class="nav-sublist" aria-label="研究复盘栏目">
+            <button type="button" class="nav-item active" data-tab="cards">公司与策略</button>
+            <button type="button" class="nav-item" data-tab="etf">ETF 对比</button>
+            <button type="button" class="nav-item" data-tab="landscape">AI 产业 25</button>
+            <button type="button" class="nav-item" data-tab="earnings">财报预告</button>
+            <button type="button" class="nav-item" data-tab="fundamentals">公司财报</button>
+            <button type="button" class="nav-item" data-tab="forecasts">前向记录</button>
+            <button type="button" class="nav-item" data-tab="inputs">分析与来源</button>
+            <button type="button" class="nav-item" data-tab="stats">验证统计</button>
+          </div>
+        </details>
+        <button class="nav-item" data-view-target="settings" type="button">
+          <span class="nav-icon" data-ui-icon="settings" aria-hidden="true"></span><span>设置</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="status-dot" id="sidebar-status-dot"></span>
+        <div>
+          <strong id="sidebar-status">系统就绪</strong>
+          <small id="sidebar-status-detail">等待检测</small>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-area" id="main-content" tabindex="-1">
+      <div class="connection-strip" id="connection-strip" role="status">
+        <span id="connection-message">正在连接本地服务…</span>
+        <button class="text-button" id="connection-retry" type="button" hidden>重新连接</button>
+      </div>
+      <div class="view-stack">
+        <nav id="event-center-tabs" class="workspace-tabs" aria-label="事件中心视图" hidden>
+          <button type="button" data-view-target="signals">全部动态</button>
+          <button type="button" data-view-target="feed">新闻流</button>
+          <button type="button" data-view-target="movements">异动</button>
+          <button type="button" data-view-target="alerts">告警</button>
+        </nav>
+        <section class="view active" data-view="overview">
+          <div class="overview-layout-toolbar"><div class="segmented-control" id="overview-layout" aria-label="总览布局"><button type="button" data-layout="compass" class="active" aria-pressed="true">罗盘</button><button type="button" data-layout="list" aria-pressed="false">列表</button></div></div>
+          <div id="overview-freshness" class="freshness-band" aria-label="数据新鲜度" role="status"></div>
+          <section id="overview-compass" aria-label="市场罗盘"></section>
+
+          <section class="overview-holdings" aria-labelledby="holdings-events-title"><div class="panel-header"><h2 id="holdings-events-title">持仓相关变化</h2><button class="text-button" data-view-target="portfolio" type="button">我的资产 <span data-ui-icon="arrow-right" aria-hidden="true"></span></button></div><div class="news-list" id="holdings-events"></div></section>
+          <div class="overview-grid">
+            <section class="panel news-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-label">LIVE FEED</p>
+                  <h2>重点事件</h2>
+                </div>
+                <button class="text-button" data-view-target="feed" type="button">查看全部 <span data-ui-icon="arrow-right" aria-hidden="true"></span></button>
+              </div>
+              <div class="news-list" id="overview-news"></div>
+            </section>
+
+            <aside class="right-rail">
+              <section class="panel pulse-panel">
+                <div class="panel-header compact sentiment-header">
+                  <div>
+                    <p class="section-label">SENTIMENT</p>
+                    <h2>标的情绪</h2>
+                  </div>
+                  <div class="sentiment-controls">
+                    <span class="threshold-label" id="threshold-label" title="按发布时间、重要性与置信度加权">72H 加权</span>
+                    <select id="sentiment-sort" aria-label="标的情绪排序" title="标的情绪排序">
+                      <option value="strength">情绪强度</option>
+                      <option value="bullish">看多优先</option>
+                      <option value="bearish">看空优先</option>
+                      <option value="news">新闻最多</option>
+                      <option value="watchlist">股票池顺序</option>
+                    </select>
+                  </div>
+                </div>
+                <div id="sentiment-pulse" class="sentiment-list"></div>
+              </section>
+
+              <section class="panel alert-panel">
+                <div class="panel-header compact">
+                  <div>
+                    <p class="section-label">PRIORITY</p>
+                    <h2>重点告警</h2>
+                  </div>
+                  <button class="icon-button" data-view-target="alerts" title="打开全部告警" aria-label="打开全部告警" type="button" data-ui-icon="arrow-right"></button>
+                </div>
+                <div id="overview-alerts" class="alert-list"></div>
+              </section>
+            </aside>
+          </div>
+
+          <section class="runtime-strip" id="runtime-strip">
+            <div>
+              <span class="runtime-indicator" id="runtime-indicator"></span>
+              <strong id="runtime-title">监测器就绪</strong>
+              <span id="runtime-copy">等待第一次检测</span>
+            </div>
+            <time id="local-clock"></time>
+          </section>
+        </section>
+
+        <section class="view" data-view="signals">
+          <div class="event-toolbar">
+            <label class="event-search">搜索动态<input id="event-search" type="search" placeholder="标的、事件或媒体" autocomplete="off"></label>
+            <label>相关范围<select id="event-scope"><option value="all">全部标的</option><option value="holdings">我的持仓</option></select></label>
+            <label>排序<select id="event-sort"><option value="latest">最新优先</option><option value="priority">告警优先</option></select></label>
+            <span id="event-count" role="status"></span>
+          </div>
+          <div id="event-timeline" class="event-timeline"></div>
+          <button id="event-more" type="button" class="secondary-button" hidden>加载更多</button>
+        </section>
+
+        <section class="view" data-view="movements">
+          <div class="section-intro movement-intro">
+            <div>
+              <p class="section-label">PORTFOLIO MOVERS</p>
+              <h2>持仓异动监控</h2>
+              <span class="scope-note" id="movement-scope-note">全部股票持仓 + 三星电子 / SK 海力士</span>
+            </div>
+            <div class="movement-intro-actions">
+              <button class="primary-button" id="movement-scan-button" type="button">
+                <span class="scan-symbol" aria-hidden="true" data-ui-icon="refresh-cw"></span> 扫描全部标的
+              </button>
+            </div>
+          </div>
+
+          <div class="movement-metric-band" aria-label="异动概览">
+            <div><span>监控标的</span><strong id="movement-count">0</strong></div>
+            <div><span>上涨异动</span><strong class="positive" id="movement-up">0</strong></div>
+            <div><span>下跌异动</span><strong class="negative" id="movement-down">0</strong></div>
+            <div><span>直接证据</span><strong id="movement-evidence">0</strong></div>
+          </div>
+
+          <div class="movement-toolbar">
+            <div class="segmented-control" id="movement-market-filter" aria-label="筛选异动市场">
+              <button class="active" data-value="all" type="button">全部</button>
+              <button data-value="CN" type="button">A股</button>
+              <button data-value="HK" type="button">港股</button>
+              <button data-value="US" type="button">美股</button>
+              <button data-value="KR" type="button">韩国</button>
+            </div>
+            <div class="movement-status-line">
+              <span id="movement-scan-time">尚未扫描</span>
+              <span id="movement-result-count">0 个标的</span>
+            </div>
+            <button class="movement-sort-button movement-sort-compact" data-movement-sort type="button" aria-label="时段涨跌排序">时段涨跌</button>
+          </div>
+
+          <p id="us-extended-status" class="scope-note" role="status"></p>
+
+          <section class="panel full-panel movement-panel">
+            <div class="table-heading movement-table-heading">
+              <span>标的</span><span>最新价</span><button class="movement-sort-button" data-movement-sort type="button" aria-label="时段涨跌排序">时段涨跌</button><span>相对量</span><span>强度</span><span>最可能原因</span>
+            </div>
+            <div id="movement-table" class="movement-table"></div>
+          </section>
+
+          <div class="cause-disclaimer">
+            原因由公开消息与价格时序匹配得出，是研究线索，不代表因果已经证实。
+          </div>
+        </section>
+
+        <section class="view" data-view="assets">
+          <div class="section-intro asset-intro">
+            <div>
+              <p class="section-label">CROSS ASSET LIVE</p>
+              <h2>黄金、Bitcoin、原油与美债</h2>
+              <span class="scope-note" id="asset-update-caption">正在连接行情</span>
+            </div>
+            <div class="asset-intro-actions">
+              <label class="asset-alert-control" title="开启黄金与 BTC 的 Windows 系统弹窗">
+                <span class="asset-alert-copy">
+                  <strong>黄金/BTC系统提醒</strong>
+                  <small>Windows 通知</small>
+                </span>
+                <span class="switch">
+                  <input id="asset-alert-toggle" type="checkbox" aria-label="开启黄金与 BTC 异动提醒">
+                  <span class="switch-track"></span>
+                </span>
+              </label>
+              <button class="icon-button asset-alert-test-button" id="asset-alert-test-button" type="button" title="测试 Windows 系统提醒" aria-label="测试 Windows 系统提醒" data-ui-icon="bell"></button>
+              <div class="asset-sync-status">
+                <span class="asset-live-label"><i id="asset-live-dot"></i><span id="asset-live-text">等待数据</span></span>
+                <span class="asset-sync-divider" aria-hidden="true"></span>
+                <span id="asset-news-sync">新闻等待同步</span>
+              </div>
+              <button class="primary-button" id="asset-refresh-button" type="button">
+                <span class="scan-symbol" aria-hidden="true" data-ui-icon="refresh-cw"></span> 刷新价格与新闻
+              </button>
+            </div>
+          </div>
+
+          <div class="asset-monitor-grid asset-monitor-four">
+            <section class="asset-monitor-column" aria-labelledby="gold-column-title">
+              <div class="asset-price-slot" id="asset-price-gold"></div>
+              <div class="asset-column-heading">
+                <div>
+                  <p class="section-label">GOLD DIRECTION</p>
+                  <h3 id="gold-column-title" data-instrument-target="ASSET:GOLD">黄金研究信号</h3>
+                </div>
+              </div>
+              <section class="panel probability-panel">
+                <div class="table-heading asset-probability-heading">
+                  <span>周期</span><span>上涨</span><span>下跌</span><span>方向</span>
+                </div>
+                <div id="probability-gold" class="probability-table"></div>
+              </section>
+              <section class="panel asset-outlook-panel" id="asset-outlook-gold" aria-label="黄金过去与未来24小时展望"></section>
+              <div class="asset-column-heading asset-column-news-heading">
+                <div>
+                  <p class="section-label">GOLD NEWS</p>
+                  <h3 data-instrument-target="ASSET:GOLD">黄金相关新闻</h3>
+                </div>
+                <span class="result-count" id="asset-news-count-gold">0 条</span>
+              </div>
+              <section class="panel">
+                <div id="asset-news-gold" class="asset-news-list"></div>
+              </section>
+            </section>
+
+            <section class="asset-monitor-column" aria-labelledby="btc-column-title">
+              <div class="asset-price-slot" id="asset-price-btc"></div>
+              <div class="asset-column-heading">
+                <div>
+                  <p class="section-label">BTC DIRECTION</p>
+                  <h3 id="btc-column-title" data-instrument-target="ASSET:BTC">BTC 研究信号</h3>
+                </div>
+              </div>
+              <section class="panel probability-panel">
+                <div class="table-heading asset-probability-heading">
+                  <span>周期</span><span>上涨</span><span>下跌</span><span>方向</span>
+                </div>
+                <div id="probability-btc" class="probability-table"></div>
+              </section>
+              <section class="panel asset-outlook-panel" id="asset-outlook-btc" aria-label="BTC过去与未来24小时展望"></section>
+              <div class="asset-column-heading asset-column-news-heading">
+                <div>
+                  <p class="section-label">BTC NEWS</p>
+                  <h3 data-instrument-target="ASSET:BTC">BTC 相关新闻</h3>
+                </div>
+                <span class="result-count" id="asset-news-count-btc">0 条</span>
+              </div>
+              <section class="panel">
+                <div id="asset-news-btc" class="asset-news-list"></div>
+              </section>
+            </section>
+
+            <section class="asset-monitor-column asset-oil-column" aria-labelledby="oil-column-title">
+              <div class="asset-price-slot" id="asset-price-oil"></div>
+              <div class="asset-column-heading">
+                <div>
+                  <p class="section-label">WTI DIRECTION</p>
+                  <h3 id="oil-column-title" data-instrument-target="ASSET:OIL">原油方向估计</h3>
+                </div>
+              </div>
+              <section class="panel probability-panel">
+                <div class="table-heading asset-probability-heading">
+                  <span>周期</span><span>上涨</span><span>下跌</span><span>方向</span>
+                </div>
+                <div id="probability-oil" class="probability-table"></div>
+              </section>
+              <section class="panel asset-outlook-panel" id="asset-outlook-oil" aria-label="原油过去与未来24小时展望"></section>
+              <div class="asset-column-heading asset-column-news-heading">
+                <div>
+                  <p class="section-label">CRUDE OIL NEWS</p>
+                  <h3 data-instrument-target="ASSET:OIL">原油相关新闻</h3>
+                </div>
+                <span class="result-count" id="asset-news-count-oil">0 条</span>
+              </div>
+              <section class="panel">
+                <div id="asset-news-oil" class="asset-news-list"></div>
+              </section>
+            </section>
+
+            <section class="asset-monitor-column asset-us5y-column" aria-labelledby="us5y-column-title">
+              <div class="asset-price-slot" id="asset-price-us5y"></div>
+              <div class="asset-column-heading">
+                <div>
+                  <p class="section-label">US TREASURY 5Y YIELD</p>
+                  <h3 id="us5y-column-title" data-instrument-target="ASSET:US5Y">五年期收益率方向</h3>
+                </div>
+              </div>
+              <section class="panel probability-panel">
+                <div class="table-heading asset-probability-heading">
+                  <span>周期</span><span>上行</span><span>下行</span><span>方向</span>
+                </div>
+                <div id="probability-us5y" class="probability-table"></div>
+              </section>
+              <section class="panel asset-outlook-panel" id="asset-outlook-us5y" aria-label="五年期美债过去与未来24小时展望"></section>
+              <div class="asset-column-heading asset-column-news-heading">
+                <div>
+                  <p class="section-label">TREASURY NEWS / 债价情绪</p>
+                  <h3 data-instrument-target="ASSET:US5Y">五年期美债相关新闻</h3>
+                </div>
+                <span class="result-count" id="asset-news-count-us5y">0 条</span>
+              </div>
+              <section class="panel">
+                <div id="asset-news-us5y" class="asset-news-list"></div>
+              </section>
+            </section>
+          </div>
+          <div class="probability-disclaimer" id="probability-method">
+            0–100 点为未校准的研究信号，不是上涨概率或真实命中率，也不构成交易指令。
+          </div>
+        </section>
+
+        <section class="view" data-view="indices"><div class="index-section-actions"><button class="text-button" type="button" data-view-target="korea-stocks">三星 / 海力士个股详情 <span data-ui-icon="arrow-right" aria-hidden="true"></span></button></div><div id="index-monitor"></div></section>
+
+        <section class="view" data-view="korea-stocks">
+          <button class="text-button" type="button" data-view-target="indices"><span data-ui-icon="arrow-left" aria-hidden="true"></span> 返回四大指数</button>
+          <div class="section-intro asset-intro">
+            <div>
+              <p class="section-label">KOREA CORE STOCKS</p>
+              <h2>三星与 SK 海力士</h2>
+              <span class="scope-note" id="korea-stock-update-caption">仅覆盖三星电子（005930）与 SK 海力士（000660）</span>
+            </div>
+            <div class="asset-intro-actions">
+              <div class="asset-sync-status">
+                <span class="asset-live-label"><i id="korea-stock-live-dot"></i><span id="korea-stock-live-text">等待数据</span></span>
+                <span class="asset-sync-divider" aria-hidden="true"></span>
+                <span id="korea-stock-news-sync">新闻等待同步</span>
+              </div>
+              <button class="primary-button" id="korea-stock-refresh-button" type="button">
+                <span class="scan-symbol" aria-hidden="true" data-ui-icon="refresh-cw"></span> 刷新两只股票
+              </button>
+            </div>
+          </div>
+
+          <div class="asset-monitor-grid">
+            <section class="asset-monitor-column" aria-labelledby="kr-stock-samsung-title">
+              <div class="asset-price-slot" id="kr-stock-price-samsung"></div>
+              <div class="asset-column-heading">
+                <div>
+                  <p class="section-label">SAMSUNG DIRECTION</p>
+                  <h3 id="kr-stock-samsung-title" data-instrument-target="KR:005930.KS">三星电子研究信号</h3>
+                </div>
+              </div>
+              <section class="panel probability-panel">
+                <div class="table-heading asset-probability-heading">
+                  <span>周期</span><span>上涨</span><span>下跌</span><span>方向</span>
+                </div>
+                <div id="kr-stock-probability-samsung" class="probability-table"></div>
+              </section>
+              <section class="panel asset-outlook-panel" id="kr-stock-outlook-samsung" aria-label="三星电子过去与未来24小时展望"></section>
+              <div class="asset-column-heading asset-column-news-heading">
+                <div>
+                  <p class="section-label">SAMSUNG NEWS</p>
+                  <h3 data-instrument-target="KR:005930.KS">三星相关新闻</h3>
+                </div>
+                <span class="result-count" id="kr-stock-news-count-samsung">0 条</span>
+              </div>
+              <section class="panel">
+                <div id="kr-stock-news-samsung" class="asset-news-list"></div>
+              </section>
+            </section>
+
+            <section class="asset-monitor-column" aria-labelledby="kr-stock-hynix-title">
+              <div class="asset-price-slot" id="kr-stock-price-hynix"></div>
+              <div class="asset-column-heading">
+                <div>
+                  <p class="section-label">HYNIX DIRECTION</p>
+                  <h3 id="kr-stock-hynix-title" data-instrument-target="KR:000660.KS">SK 海力士研究信号</h3>
+                </div>
+              </div>
+              <section class="panel probability-panel">
+                <div class="table-heading asset-probability-heading">
+                  <span>周期</span><span>上涨</span><span>下跌</span><span>方向</span>
+                </div>
+                <div id="kr-stock-probability-hynix" class="probability-table"></div>
+              </section>
+              <section class="panel asset-outlook-panel" id="kr-stock-outlook-hynix" aria-label="海力士过去与未来24小时展望"></section>
+              <div class="asset-column-heading asset-column-news-heading">
+                <div>
+                  <p class="section-label">HYNIX NEWS</p>
+                  <h3 data-instrument-target="KR:000660.KS">海力士相关新闻</h3>
+                </div>
+                <span class="result-count" id="kr-stock-news-count-hynix">0 条</span>
+              </div>
+              <section class="panel">
+                <div id="kr-stock-news-hynix" class="asset-news-list"></div>
+              </section>
+            </section>
+          </div>
+          <p class="probability-disclaimer" id="kr-stock-probability-method">
+            基于当日价格变化和对应时间窗口内新闻的启发式估计，尚未校准为真实胜率，不构成交易建议。
+          </p>
+        </section>
+
+        <section class="view" data-view="portfolio">
+          <div class="section-intro portfolio-intro">
+            <div>
+              <p class="section-label">MY PORTFOLIO</p>
+              <h2>我的持仓</h2>
+              <span class="scope-note" id="portfolio-update-caption">所有数据保存在本机</span>
+            </div>
+            <div class="portfolio-intro-actions">
+              <span class="portfolio-sync-state"><i id="portfolio-live-dot"></i><span id="portfolio-live-text">等待持仓</span></span>
+              <button class="icon-button" id="portfolio-refresh-button" type="button" title="刷新持仓行情" aria-label="刷新持仓行情" data-ui-icon="refresh-cw"></button>
+              <button class="secondary-button danger-button" id="portfolio-clear-button" type="button" title="清空全部股票与基金持仓记录，不执行卖出" disabled><span class="trash-icon" aria-hidden="true"></span>清空持仓</button>
+              <button class="primary-button" id="add-position-button" type="button">
+                <span aria-hidden="true" data-ui-icon="plus"></span> 新增持仓
+              </button>
+            </div>
+          </div>
+
+          <div class="portfolio-capital-row">
+            <form id="portfolio-principal-form" class="portfolio-principal-form">
+              <label for="portfolio-principal-input">本金（人民币）</label>
+              <div class="portfolio-principal-controls">
+                <input id="portfolio-principal-input" name="principal_cny" type="number" inputmode="decimal" min="0" max="1000000000000" step="0.01" placeholder="未设置" required aria-describedby="portfolio-principal-error">
+                <button id="portfolio-principal-save" class="icon-button" type="submit" title="保存本金" aria-label="保存本金" data-ui-icon="save"></button>
+              </div>
+              <small id="portfolio-principal-error" class="negative" role="alert"></small>
+            </form>
+            <div class="portfolio-capital-return">
+              <span id="portfolio-capital-rate-label">持仓相对本金盈亏率</span>
+              <strong id="portfolio-capital-rate">--</strong>
+              <small id="portfolio-capital-status">尚未设置本金</small>
+            </div>
+            <p class="portfolio-capital-scope">仅按持仓市值对照本金，不含现金、分红及已实现盈亏；不代表账户总回报。</p>
+          </div>
+
+          <div class="portfolio-metric-band" aria-label="持仓概览">
+            <div><span>组合市值</span><strong id="portfolio-market-value">¥0.00</strong><small>折算人民币</small></div>
+            <div><span>持仓成本</span><strong id="portfolio-cost-value">¥0.00</strong><small>折算人民币</small></div>
+            <div><span>浮动盈亏</span><strong id="portfolio-total-pnl">¥0.00</strong><small id="portfolio-total-pnl-pct">0.00%</small></div>
+            <div><span>当日盈亏估算</span><strong id="portfolio-daily-pnl">--</strong><small id="portfolio-daily-coverage">等待有效报价</small></div>
+            <div><span>持仓数量</span><strong id="portfolio-position-count">0</strong><small id="portfolio-priced-count">0 个已有行情</small></div>
+          </div>
+
+          <div class="portfolio-workspace">
+            <section class="panel portfolio-position-panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="section-label">POSITIONS</p>
+                  <h2>持仓明细</h2>
+                </div>
+                <span class="result-count" id="portfolio-result-count">0 个持仓</span>
+              </div>
+              <div class="portfolio-toolbar">
+                <div class="segmented-control portfolio-type-filter" id="portfolio-type-filter" aria-label="筛选持仓类型">
+                  <button class="active" data-portfolio-type="all" type="button">全部</button>
+                  <button data-portfolio-type="stock" type="button">股票</button>
+                  <button data-portfolio-type="fund" type="button">基金</button>
+                </div>
+                <label class="search-box portfolio-search-box">
+                  <span aria-hidden="true" data-ui-icon="search"></span>
+                  <input id="portfolio-search" type="search" placeholder="搜索名称或代码">
+                </label>
+                <div class="portfolio-list-tools">
+                  <label class="portfolio-sort-control">
+                    <span>排序</span>
+                    <select id="portfolio-sort-key" aria-label="持仓排序方式">
+                      <option value="default">录入顺序</option>
+                      <option value="market_value">市值</option>
+                      <option value="daily_pnl">今日盈亏</option>
+                      <option value="total_pnl">浮动盈亏</option>
+                    </select>
+                  </label>
+                  <button class="icon-button" id="portfolio-sort-direction" type="button" title="降序排列" aria-label="切换持仓排序方向">↓</button>
+                </div>
+              </div>
+              <div class="table-heading portfolio-table-heading">
+                <span>标的</span><span>持仓 / 成本</span><span>最新价 / 净值</span><span>市值</span><span>浮动盈亏</span><span>仓位</span><span>研究提示</span><span>操作</span>
+              </div>
+              <div id="portfolio-position-list" class="portfolio-position-list"></div>
+            </section>
+
+            <aside class="portfolio-analysis-column">
+              <section class="panel portfolio-advice-panel">
+                <div class="panel-header compact">
+                  <div>
+                    <p class="section-label">PORTFOLIO REVIEW</p>
+                    <h2>组合分析</h2>
+                  </div>
+                  <span class="portfolio-risk-badge" id="portfolio-risk-level">待分析</span>
+                </div>
+                <div class="portfolio-advice-body">
+                  <h3 id="portfolio-analysis-title">添加持仓后生成分析</h3>
+                  <div id="portfolio-suggestions" class="portfolio-suggestion-list"></div>
+                  <small id="portfolio-analysis-method">价格趋势、新闻情绪与事件因子综合分析</small>
+                </div>
+              </section>
+              <section class="panel portfolio-allocation-panel">
+                <div class="panel-header compact">
+                  <div>
+                    <p class="section-label">ALLOCATION</p>
+                    <h2>市场配置</h2>
+                  </div>
+                </div>
+                <div id="portfolio-allocations" class="portfolio-allocation-list"></div>
+              </section>
+            </aside>
+          </div>
+          <p class="probability-disclaimer">组合提示基于公开行情与已收录新闻，仅供研究参考，不构成个性化投资建议或交易指令。</p>
+        </section>
+
+        <section class="view" data-view="research">
+          <div class="research-toolbar">
+            <h2 id="research-current-title">公司与策略</h2>
+            <div class="research-actions"><span id="research-runtime" class="quiet-note">等待记录器</span><a id="research-export" class="icon-button" href="/api/research/export" title="导出冻结记录" aria-label="导出冻结记录" download data-ui-icon="download"></a><button id="research-settings-button" class="icon-button" type="button" title="前向验证设置" aria-label="前向验证设置" data-ui-icon="settings" hidden></button><button id="research-refresh" class="icon-button" type="button" title="刷新预测记录" aria-label="刷新预测记录" data-ui-icon="refresh-cw"></button></div>
+          </div>
+          <div id="research-request-status" class="research-request-status" role="status" hidden></div>
+          <div class="research-summary-band" hidden><div><span>已冻结预测</span><strong id="research-total">--</strong></div><div><span>等待结果</span><strong id="research-pending">--</strong></div><div><span>已到期核对</span><strong id="research-evaluated">--</strong></div><div><span>报价缺失</span><strong id="research-missing">--</strong></div></div>
+          <p class="research-notice" id="research-notice" role="status">仅前向模拟，不下单。旧数据不补写历史预测，缺失结果不计入成绩。</p>
+          <div id="research-etf-panel" class="research-tab-panel" hidden>
+            <div class="etf-heading"><div><h2>四只 ETF，四种软件敞口</h2><p>IGV 广义软件 · XSW 软件与服务等权 · WCLD 云软件 · BUG 网络安全</p></div><span id="etf-coverage" class="etf-coverage" role="status"></span></div>
+            <details class="etf-import"><summary>导入持仓快照</summary>
+              <form id="etf-import-form" class="research-filter-bar">
+                <label>Excel / CSV<input id="etf-import-file" type="file" accept=".xlsx,.csv" required></label>
+                <label>CSV 标的<select id="etf-import-symbol"><option value="IGV">IGV</option><option value="XSW">XSW</option><option value="WCLD">WCLD</option><option value="BUG">BUG</option></select></label>
+                <label>补充持仓日期<input id="etf-import-date" type="date"></label>
+                <button class="secondary-button" type="submit">导入研究库</button>
+                <span id="etf-import-status" role="status"></span>
+              </form>
+            </details>
+            <div id="etf-comparison" class="etf-table-scroll" tabindex="0" role="region" aria-label="ETF 特征与集中度对照"></div>
+            <section class="etf-section" aria-labelledby="etf-overlap-title">
+              <div class="etf-section-heading"><h3 id="etf-overlap-title">持仓重叠</h3><select id="etf-overlap-filter" aria-label="持仓交集"><option value="shared">共同持仓</option><option value="all">股票并集</option><option value="unique">仅一只持有</option></select></div>
+              <p class="etf-note">加权交集 = 同一股票在两只 ETF 中的正权重取较小值再相加，单位为净资产百分点；不含现金、期货及负权重。不同份额类别分开，代码无法识别的项目不参与匹配。</p>
+              <div id="etf-overlap-matrix" class="etf-table-scroll" tabindex="0" role="region" aria-label="两两持仓交集"></div>
+              <div class="research-filter-bar"><input id="etf-overlap-search" type="search" placeholder="公司或代码" aria-label="搜索对照持仓"><button id="etf-pair-reset" class="text-button" type="button" hidden>全部 ETF</button><span id="etf-overlap-count" class="quiet-note" role="status"></span></div>
+              <div id="etf-overlap-list" class="etf-table-scroll etf-holdings-scroll" tabindex="0" role="region" aria-label="股票持仓权重对照"></div>
+            </section>
+            <section class="etf-section" aria-labelledby="etf-holdings-title">
+              <div class="etf-section-heading"><h3 id="etf-holdings-title">完整持仓</h3><div id="etf-fund-tabs" class="segmented-control" aria-label="选择 ETF"></div></div>
+              <div id="etf-selected-source" class="etf-source"></div>
+              <div class="research-filter-bar"><input id="etf-holding-search" type="search" placeholder="公司或代码" aria-label="搜索完整持仓"><select id="etf-holding-type" aria-label="持仓项目类型"><option value="all">全部项目</option><option value="stock">股票</option><option value="nonstock">现金 / 期货 / 其他</option></select><select id="etf-holding-sort" aria-label="持仓排序"><option value="weight-desc">权重从高到低</option><option value="weight-asc">权重从低到高</option><option value="name">公司名称</option><option value="source">原始顺序</option></select><span id="etf-holding-count" class="quiet-note" role="status"></span><button id="etf-holdings-export" class="icon-button" type="button" title="导出完整持仓 CSV" aria-label="导出完整持仓 CSV" data-ui-icon="download"></button></div>
+              <div id="etf-holdings-list" class="etf-table-scroll etf-holdings-scroll" tabindex="0" role="region" aria-label="完整持仓表"></div>
+              <div id="etf-research-focus" class="etf-research-focus"></div>
+            </section>
+          </div>
+          <div id="research-landscape-panel" class="research-tab-panel" hidden>
+            <div class="company-intro"><h2>AI 产业 25</h2><p>算力看资本回报，模型看任务成本，平台看付费转化，应用看续费与现金流。投资机构看退出，生态组织看治理，矿产看资源与成本曲线。</p></div>
+            <div id="company-summary" class="company-summary" aria-label="机构类型分布"></div>
+            <div class="research-filter-bar company-filters">
+              <input id="company-search" type="search" aria-label="搜索产业公司" placeholder="公司、产品、中文名或代码">
+              <select id="company-layer" aria-label="产业角色"><option value="all">全部产业角色</option></select>
+              <select id="company-entity" aria-label="机构类型"><option value="all">全部机构类型</option></select>
+              <button id="company-reset" class="text-button" type="button">清除筛选</button>
+              <span id="company-count" class="quiet-note" role="status"></span>
+            </div>
+            <div class="company-layout">
+              <nav id="company-list" class="company-list" aria-label="25 家公司与机构"></nav>
+              <article id="company-detail" class="company-detail" aria-labelledby="company-detail-title"></article>
+            </div>
+          </div>
+          <div id="research-earnings-panel" class="research-tab-panel" hidden>
+            <div class="earnings-heading"><h2>美股财报预告</h2><button id="earnings-source-refresh" class="icon-button" type="button" title="检查新的财报预告" aria-label="检查新的财报预告" data-ui-icon="refresh-cw"></button></div>
+            <div id="earnings-coverage" class="earnings-coverage" role="status"></div>
+            <div class="research-filter-bar earnings-filters">
+              <input id="earnings-search" type="search" placeholder="公司、代码或行业" aria-label="搜索财报公司">
+              <select id="earnings-days" aria-label="财报日期范围"><option value="7">未来 7 天</option><option value="30" selected>未来 30 天</option><option value="90">未来 90 天</option><option value="all">所有未来日期</option></select>
+              <select id="earnings-scope" aria-label="财报公司范围"><option value="liquid">热门与高成交额</option><option value="all">全部美股公司</option><option value="portfolio">我的美股持仓</option><option value="watchlist">美股股票池</option></select>
+              <select id="earnings-sort" aria-label="财报排序"><option value="date">发布日期从近到远</option><option value="dollar">最新成交额从高到低</option><option value="name">公司名称</option></select>
+              <label class="earnings-checkbox"><input id="earnings-unknown" type="checkbox">包含日期待更新</label>
+            </div>
+            <p id="earnings-status" class="earnings-status" role="status" aria-live="polite"></p>
+            <div id="earnings-table" class="earnings-table-scroll" tabindex="0" role="region" aria-label="美股财报预告表" aria-busy="false"></div>
+            <div class="research-pagination earnings-pagination"><span id="earnings-page-label" role="status"></span><button id="earnings-prev" class="icon-button" type="button" title="上一页" aria-label="上一页财报" data-ui-icon="arrow-left" disabled></button><button id="earnings-next" class="icon-button" type="button" title="下一页" aria-label="下一页财报" data-ui-icon="arrow-right" disabled></button></div>
+            <p class="quiet-note earnings-data-note">日期按美国东部日历；盘后可能落在北京时间次日。日期为公开来源预计，具体以公司公告为准。成交额为价格与成交量的乘积估算，非实时成交额；30日均量折算不等于30日平均成交额。</p>
+          </div>
+          <div id="research-fundamentals-panel" class="research-tab-panel" hidden><div id="fundamental-records"></div></div>
+          <div id="research-cards-panel" class="research-tab-panel">
+            <div class="research-filter-bar"><input id="strategy-search" type="search" aria-label="搜索研究" placeholder="公司、标的或代码"><select id="strategy-stance" aria-label="研究判断"><option value="all">全部判断</option><option value="bullish">有条件看多</option><option value="neutral">中性</option><option value="bearish">有条件看空</option></select><span id="strategy-count" class="quiet-note"></span><button id="strategy-new" class="secondary-button" type="button">新建研究</button></div>
+            <form id="strategy-editor" class="strategy-editor" hidden></form><div id="strategy-cards"></div>
+          </div>
+          <div class="research-filter-bar" id="research-forecast-filters" hidden><select id="research-asset" aria-label="记录标的"><option value="all">黄金与 BTC</option><option value="GOLD">黄金</option><option value="BTC">BTC</option></select><select id="research-horizon" aria-label="预测周期"><option value="all">全部周期</option><option value="15m">15 分钟</option><option value="1h">1 小时</option><option value="24h">24 小时</option></select><select id="research-status" aria-label="核对状态"><option value="all">全部状态</option><option value="pending">等待结果</option><option value="evaluated">已核对</option><option value="missing">报价缺失</option></select><span class="quiet-note">同一标的同一周期不重叠记录</span></div>
+          <div id="research-forecasts-panel" class="research-tab-panel" hidden><div class="research-table-head"><span>标的 / 周期</span><span>冻结时间 / 到期</span><span>上涨信号</span><span>实际涨跌</span><span>模拟净收益</span><span>状态</span></div><div id="research-records"></div></div>
+          <div id="research-inputs-panel" class="research-tab-panel" hidden><div class="research-filter-bar"><select id="research-kind" aria-label="原始数据类型"><option value="all">全部输入版本</option><option value="company_profile">AI 产业公司资料</option><option value="news">新闻源输入</option><option value="social">社交帖子</option><option value="trump">Trump 政策来源</option><option value="forecast_inputs">预测依据快照</option></select><span id="research-input-count" class="quiet-note"></span></div><div id="research-inputs"></div></div>
+          <div id="research-stats-panel" class="research-tab-panel" hidden><div class="research-filter-bar"><select id="research-cohort" aria-label="选择验证方案"></select><span class="quiet-note">版本、参数、标的和周期分别统计</span></div><div id="research-group-stats"></div><div class="research-section-heading"><h2>预测值与实际频率</h2><span>原始信号，未经校准</span></div><div id="research-calibration"></div></div>
+          <div class="research-pagination" id="research-pagination" hidden><span id="research-page-label"></span><button id="research-prev" class="icon-button" type="button" title="上一页" aria-label="上一页记录" data-ui-icon="arrow-left"></button><button id="research-next" class="icon-button" type="button" title="下一页" aria-label="下一页记录" data-ui-icon="arrow-right"></button></div>
+          <p class="probability-disclaimer" hidden>上涨事件以到期报价高于冻结时的参考报价为准；模拟成交使用记录完成后收到的新报价。手续费与滑点为可修改的假设，不含融资、借券与资金费率。命中率和单笔平均收益不是账户业绩。</p>
+        </section>
+
+        <section class="view" data-view="social">
+          <div id="social-view-tabs" class="segmented-control social-view-tabs" aria-label="情绪模块视图">
+            <button type="button" class="active" data-social-view="discussion" aria-pressed="true">讨论情绪</button>
+            <button type="button" data-social-view="trump" aria-pressed="false">Trump 政策因子</button>
+          </div>
+          <div id="social-discussion-panel">
+          <div class="social-toolbar">
+            <div class="segmented-control" id="social-window" aria-label="情绪时间窗口">
+              <button data-hours="1" type="button">1 小时</button><button data-hours="24" class="active" type="button">24 小时</button><button data-hours="168" type="button">7 天</button>
+            </div>
+            <div class="social-actions">
+              <span id="social-sync" class="quiet-note">等待数据</span>
+              <button id="social-web-settings-button" class="secondary-button" type="button">网页采集</button>
+              <button id="social-import-button" class="secondary-button" type="button">导入帖子</button>
+              <button id="social-settings-button" class="icon-button" type="button" title="数据源与采集设置" aria-label="数据源与采集设置" data-ui-icon="settings"></button>
+              <button id="social-refresh-button" class="icon-button" type="button" title="刷新社交讨论" aria-label="刷新社交讨论" data-ui-icon="refresh-cw" disabled></button>
+            </div>
+          </div>
+          <details class="social-platform-connections"><summary>公开社区数据源 <span id="social-web-sync">公开订阅</span></summary>
+            <div id="social-web-sources" class="social-source-band social-web-source-band" aria-label="网页讨论来源"></div>
+          </details>
+          <details class="social-platform-connections"><summary>小红书 / 抖音 / X / Threads <span id="social-platform-status">待接入</span></summary><div id="social-sources" class="social-source-band" aria-label="平台连接状态"></div></details>
+          <div id="social-health" class="social-health" role="status">
+            <div><strong id="social-status-title">正在读取采集状态</strong><p id="social-notice" class="social-notice"></p></div>
+            <button id="social-connect-button" class="secondary-button" type="button" hidden>接入数据源</button>
+          </div>
+          <div class="social-summary-band" aria-label="讨论概览">
+            <div><span>明确观点</span><strong id="social-total">--</strong><small id="social-received">已采集 -- 条 · 明确观点去重</small></div>
+            <div><span>有讨论标的</span><strong id="social-discussed">--</strong><small id="social-scope">监测股票池</small></div>
+            <div><span>冷门观察</span><strong id="social-cold-count">--</strong><small>已检索来源内</small></div>
+            <div><span>覆盖不足</span><strong id="social-unknown">--</strong><small>暂不能判断冷热</small></div>
+          </div>
+          <div class="social-filter-bar">
+            <div class="segmented-control" id="social-scope-tabs" aria-label="社交研究范围">
+              <button type="button" data-scope="discovery" class="active" aria-pressed="true">新机会发现</button>
+              <button type="button" data-scope="watchlist" aria-pressed="false">我的股票池</button>
+            </div>
+            <input id="social-search" type="search" placeholder="搜索股票名称或代码" aria-label="搜索社交情绪股票">
+            <select id="social-platform" aria-label="选择社交平台"><option value="all">全部来源</option><option value="hackernews">Hacker News</option><option value="valuepickr">ValuePickr</option><option value="tradingqna">Trading Q&A</option><option value="xiaohongshu">小红书</option><option value="douyin">抖音</option><option value="x">X</option><option value="threads">Threads</option></select>
+            <select id="social-sort" aria-label="情绪榜排序"><option value="heat">讨论热度</option><option value="signal">样本质量</option><option value="change">热度升温</option><option value="cooling">热度降温</option><option value="bullish">看多情绪</option><option value="bearish">看空情绪</option></select>
+            <span id="social-result-count" class="quiet-note"></span>
+          </div>
+          <p id="social-discovery-status" class="quiet-note" role="status"></p>
+          <div class="social-workspace">
+            <section class="social-ranking">
+              <div class="social-section-header"><h2 id="social-ranking-title">新机会候选</h2><span>声量 / 观点</span></div>
+              <div id="social-hot-list" class="social-stock-list"></div>
+              <div class="social-section-header"><h2>冷门观察</h2><span>低声量 · 有检索覆盖</span></div>
+              <div id="social-cold-list" class="social-stock-list"></div>
+            </section>
+            <section class="social-inspection" aria-label="股票讨论详情">
+              <div id="social-stock-detail"></div>
+              <div class="social-section-header"><h2>讨论原帖</h2><span id="social-evidence-count"></span></div>
+              <div id="social-posts"></div>
+            </section>
+          </div>
+          <section id="social-web-samples-section" class="social-web-samples-section">
+            <div class="social-section-header"><h2>近期明确观点</h2><span id="social-web-sample-count"></span></div>
+            <div class="social-sample-toolbar">
+              <input id="social-sample-search" type="search" maxlength="100" placeholder="搜索正文、标题或代码" aria-label="搜索网页讨论">
+              <select id="social-sample-scope" aria-label="筛选网页样本"><option value="all">全部观点</option><option value="matched">我的股票池</option><option value="unmatched">股票池外</option></select>
+              <button id="social-keywords-button" class="secondary-button" type="button">匹配词</button>
+            </div>
+            <p id="social-sample-quality" class="quiet-note" role="status"></p>
+            <div id="social-web-samples"></div>
+          </section>
+          <p id="social-method" class="probability-disclaimer"></p>
+          </div>
+
+          <div id="social-trump-panel" hidden>
+          <div class="section-intro trump-intro">
+            <div>
+              <p class="section-label">X POLICY SIGNAL</p>
+              <h2>Trump 政策因子</h2>
+              <span class="scope-note" id="trump-status-detail">公开媒体政策报道，无需 X Token</span>
+            </div>
+            <div class="trump-intro-actions">
+              <div class="trump-connection-state">
+                <i id="trump-status-dot"></i>
+                <span id="trump-status-text">未连接</span>
+              </div>
+              <button class="primary-button" id="trump-refresh-button" type="button">
+                <span class="scan-symbol" aria-hidden="true" data-ui-icon="refresh-cw"></span> 刷新 Trump 动态
+              </button>
+            </div>
+          </div>
+
+          <div class="trump-metric-band">
+            <div><span>全局因子</span><strong id="trump-global-score">--</strong><small id="trump-global-direction">暂无数据</small></div>
+            <div><span>已读取来源</span><strong id="trump-post-count">0</strong><small>近 72 小时有效</small></div>
+            <div><span>最近政策来源</span><strong id="trump-last-post">--</strong><small>按原文发布时间</small></div>
+            <div><span>覆盖标的</span><strong id="trump-covered-assets">0</strong><small>股票池专属因子</small></div>
+          </div>
+
+          <div class="trump-workspace">
+            <section class="panel trump-post-panel">
+              <div class="panel-header compact">
+                <div><p class="section-label">POLICY SOURCES</p><h2>最新政策来源</h2></div>
+                <span class="result-count" id="trump-post-result">0 条</span>
+              </div>
+              <div id="trump-posts" class="trump-post-list"></div>
+            </section>
+
+            <section class="panel trump-factor-panel">
+              <div class="panel-header compact">
+                <div><p class="section-label">ALL ASSET FACTOR</p><h2>全标的 Trump 因子</h2></div>
+                <span class="result-count" id="trump-factor-count">0 个标的</span>
+              </div>
+              <div class="table-heading trump-factor-heading">
+                <span>标的</span><span>因子</span><span>主题与依据</span><span>时间</span>
+              </div>
+              <div id="trump-factor-table" class="trump-factor-table"></div>
+            </section>
+          </div>
+          <p class="probability-disclaimer">Trump 因子按主题相关性、标的暴露与时间衰减计算，是事件研究信号，不代表因果关系或真实胜率。</p>
+          </div>
+        </section>
+
+        <section class="view" data-view="feed">
+          <div class="view-toolbar">
+            <div class="filter-group">
+              <label class="search-box">
+                <span aria-hidden="true" data-ui-icon="search"></span>
+                <input id="news-search" type="search" aria-label="搜索新闻" placeholder="搜索股票、标题或事件">
+              </label>
+              <select id="market-filter" aria-label="筛选市场">
+                <option value="all">全部市场</option>
+                <option value="CN">A股</option>
+                <option value="HK">港股</option>
+                <option value="US">美股</option>
+                <option value="KR">韩国</option>
+              </select>
+              <select id="news-language" aria-label="新闻语言"><option value="all">全部新闻 · 中英对照</option><option value="zh">已有中文内容</option></select>
+              <div class="segmented-control" id="sentiment-filter" aria-label="筛选情绪">
+                <button class="active" data-value="all" type="button">全部</button>
+                <button data-value="bullish" type="button">利多</button>
+                <button data-value="bearish" type="button">利空</button>
+                <button data-value="neutral" type="button">中性</button>
+              </div>
+            </div>
+            <div class="news-list-tools">
+              <select id="news-sort" aria-label="新闻排序">
+                <option value="latest">最新发布</option>
+                <option value="strength">信号最强</option>
+              </select>
+              <span class="result-count" id="news-result-count">0 条记录</span>
+            </div>
+          </div>
+          <section class="panel full-panel">
+            <div class="table-heading news-table-heading">
+              <span>事件</span><span>分类</span><span>方向</span><span>时间</span>
+            </div>
+            <div class="news-list expanded" id="all-news"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="alerts">
+          <div class="section-intro">
+            <div>
+              <p class="section-label">SIGNAL QUEUE</p>
+              <h2>告警队列</h2>
+            </div>
+            <span class="quiet-note" id="alert-summary">0 条告警</span>
+          </div>
+          <section class="panel full-panel">
+            <div id="all-alerts" class="alert-table"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="watchlist">
+          <div class="section-intro">
+            <div>
+              <p class="section-label">UNIVERSE</p>
+              <h2>监测股票池</h2>
+            </div>
+            <button class="primary-button" id="add-stock-button" type="button">
+              <span aria-hidden="true">＋</span> 新增股票
+            </button>
+          </div>
+          <section class="panel full-panel">
+            <div class="table-heading watch-table-heading">
+              <span>市场 / 代码</span><span>公司</span><span>SKHY ADR 溢价</span><span>Trump 因子</span><span>搜索条件</span><span>操作</span>
+            </div>
+            <div id="watchlist-table" class="watchlist-table"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="settings">
+          <div class="section-intro">
+            <div>
+              <p class="section-label">CONFIGURATION</p>
+              <h2>监测设置</h2>
+            </div>
+            <span class="quiet-note" id="model-status">本地规则</span>
+          </div>
+          <form id="settings-form" class="settings-layout">
+            <section class="settings-section">
+              <div class="settings-heading"><h3>功能运行状态</h3><button id="restore-features" type="button" class="secondary-button">恢复免费功能</button></div>
+              <div id="feature-health" class="settings-fields" aria-live="polite"></div>
+              <p id="feature-health-status" class="quiet-note" role="status"></p>
+            </section>
+            <section class="settings-section">
+              <div class="settings-heading">
+                <h3>检测参数</h3>
+                <p>调整轮询速度和需要触发告警的信号强度。</p>
+              </div>
+              <div class="settings-fields">
+                <label class="field-row">
+                  <span><strong>新闻检测间隔</strong><small>每轮完成后等待；来源限流时自动退避</small></span>
+                  <span class="number-field"><input id="setting-interval" type="number" min="1" max="86400"><em>秒</em></span>
+                </label>
+                <label class="field-row">
+                  <span><strong>新闻窗口</strong><small>总览和情绪统计的回看范围</small></span>
+                  <span class="number-field"><input id="setting-lookback" type="number" min="1" max="8760"><em>小时</em></span>
+                </label>
+                <label class="field-row">
+                  <span><strong>每标的候选量</strong><small>每个新闻源 / 每轮</small></span>
+                  <span class="number-field"><input id="setting-candidates" type="number" min="1" max="100" aria-label="每标的每来源候选量"><em>条</em></span>
+                </label>
+                <label class="field-row">
+                  <span><strong>黄金 / BTC / 原油 / 美债新闻</strong><small>RSS 秒级调度；搜索聚合缓存 60 秒，政策检索 300 秒</small></span>
+                  <span class="number-field"><input id="setting-asset-news-interval" type="number" min="1" max="300" aria-label="跨资产新闻轮询秒数"><em>秒</em></span>
+                </label>
+                <label class="field-row threshold-row">
+                  <span><strong>告警阈值</strong><small>绝对分数达到该值才进入告警队列</small></span>
+                  <span class="range-field">
+                    <input id="setting-threshold" type="range" min="0.05" max="1" step="0.05">
+                    <output id="threshold-output">0.35</output>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <div class="settings-heading">
+                <h3>X / Trump 动态</h3>
+                <p>X API Token 使用 Windows 当前用户加密保存，不会写入 config.json。</p>
+              </div>
+              <div class="settings-fields">
+                <div class="field-row x-token-row">
+                  <span><strong>Bearer Token</strong><small id="x-token-status">尚未配置 X API</small></span>
+                  <div class="x-token-control">
+                    <input id="x-token-input" type="password" autocomplete="off" placeholder="粘贴 X API Bearer Token" aria-label="X API Bearer Token">
+                    <button class="secondary-button" id="x-token-save-button" type="button">保存并连接</button>
+                    <button class="icon-button danger-button" id="x-token-clear-button" type="button" title="清除 X API Token" aria-label="清除 X API Token" data-ui-icon="x"></button>
+                  </div>
+                </div>
+                <div class="field-row">
+                  <span><strong>官方接口</strong><small>按 X API 当前规则，读取帖子可能产生费用</small></span>
+                  <a class="text-button" href="https://developer.x.com/" target="_blank" rel="noopener noreferrer">打开 X 开发者后台 ↗</a>
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <div class="settings-heading">
+                <h3>分析与来源</h3>
+                <p>模型负责判断影响，资讯源负责提供可追溯的新闻链接。</p>
+              </div>
+              <div class="settings-fields">
+                <div class="field-row">
+                  <span><strong>分析方式</strong><small id="analysis-engine-caption">自动选择可用引擎</small></span>
+                  <div class="segmented-control" id="analysis-mode-control">
+                    <button data-value="auto" type="button">自动</button>
+                    <button data-value="rules" type="button">规则</button>
+                    <button data-value="openai" type="button">模型</button>
+                  </div>
+                </div>
+                <label class="field-row">
+                  <span><strong>英文新闻译为中文</strong><small id="translation-status">原文保留，机器翻译不参与情绪计算</small></span>
+                  <span class="switch"><input type="checkbox" id="setting-translation" aria-label="英文新闻译为中文"><span class="switch-track"></span></span>
+                </label>
+                <label class="field-row">
+                  <span><strong>公开公司财报</strong><small>SEC 年度财报与最近财年估值，6小时检查一次</small></span>
+                  <span class="switch"><input type="checkbox" id="setting-fundamentals" aria-label="公开公司财报"><span class="switch-track"></span></span>
+                </label>
+                <label class="field-row">
+                  <span><strong>股票异动范围</strong><small>韩国固定三星与海力士；全市场按5分钟调度</small></span>
+                  <select id="setting-movement-scope" aria-label="股票异动范围"><option value="portfolio">持仓与韩国核心</option><option value="all">A股 / 港股 / 美股全市场</option></select>
+                </label>
+                <label class="field-row">
+                  <span><strong>Yahoo Finance RSS</strong><small>优先提供可直达发布方的原文链接</small></span>
+                  <span class="switch">
+                    <input type="checkbox" id="setting-yahoo-rss" aria-label="Yahoo Finance RSS">
+                    <span class="switch-track"></span>
+                  </span>
+                </label>
+                <label class="field-row">
+                  <span><strong>Google News RSS</strong><small>免费新闻入口，失败时不影响本地数据</small></span>
+                  <span class="switch">
+                    <input type="checkbox" id="setting-rss" aria-label="Google News RSS">
+                    <span class="switch-track"></span>
+                  </span>
+                </label>
+                <label class="field-row">
+                  <span><strong>Bing News RSS</strong><small>补充股票、评级、订单与公司事件检索</small></span>
+                  <span class="switch">
+                    <input type="checkbox" id="setting-bing-rss" aria-label="Bing News RSS">
+                    <span class="switch-track"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <div class="settings-actions">
+              <span id="settings-state">所有设置保存在本机</span>
+              <button class="primary-button" type="submit">保存设置</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="research-settings-dialog" class="modal">
+    <form id="research-settings-form"><div class="modal-header"><h2>前向验证设置</h2><button class="icon-button close-dialog" type="button" title="关闭">×</button></div>
+      <label class="research-checkbox"><span>记录新的预测</span><input name="enabled" type="checkbox"></label>
+      <label><span>记录完成后的执行等待（秒）</span><input name="latency_seconds" type="number" min="1" max="60" step="1" required></label>
+      <div class="research-cost-heading"><span>单边假设</span><span>手续费（%）</span><span>滑点（%）</span></div>
+      <div class="research-cost-row"><strong>黄金</strong><input name="gold_fee" type="number" min="0" max="5" step="0.001" required aria-label="黄金单边手续费百分比"><input name="gold_slip" type="number" min="0" max="5" step="0.001" required aria-label="黄金单边滑点百分比"></div>
+      <div class="research-cost-row"><strong>BTC</strong><input name="btc_fee" type="number" min="0" max="5" step="0.001" required aria-label="BTC单边手续费百分比"><input name="btc_slip" type="number" min="0" max="5" step="0.001" required aria-label="BTC单边滑点百分比"></div>
+      <p class="research-notice">变更仅影响新记录。暂停新增后，已有预测仍会到期核对。费用不是券商报价。</p><p id="research-settings-error" class="negative" role="alert"></p>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">取消</button><button class="primary-button" type="submit">保存方案</button></div></form>
+  </dialog>
+  <dialog id="research-detail-dialog" class="modal research-detail-modal"><article><div class="modal-header"><h2 id="research-detail-title">冻结记录</h2><button class="icon-button close-dialog" type="button" title="关闭">×</button></div><div id="research-detail-body"></div></article></dialog>
+
+  <dialog id="social-keywords-dialog" class="modal social-settings-modal">
+    <form id="social-keywords-form">
+      <div class="modal-header"><h2>股票匹配词</h2><button class="icon-button close-dialog" type="button" title="关闭">×</button></div>
+      <label><span>股票</span><select id="social-keyword-stock"></select></label>
+      <div class="social-keyword-base"><span>基础代码与名称</span><p id="social-keyword-base"></p></div>
+      <label><span>补充匹配词</span><textarea id="social-keyword-custom" rows="5" maxlength="1200"></textarea></label>
+      <p id="social-keyword-status" class="quiet-note" role="status"></p>
+      <p id="social-keyword-error" class="negative" role="alert"></p>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">关闭</button><button id="social-keyword-save" class="primary-button" type="submit">保存匹配词</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="social-web-settings-dialog" class="modal social-settings-modal">
+    <form id="social-web-settings-form">
+      <div class="modal-header"><h2>网页样本采集</h2><button class="icon-button close-dialog" type="button" title="关闭">×</button></div>
+      <div class="social-settings-controls">
+        <label class="social-auto-field"><span>社交自动采集</span><input id="social-web-auto" type="checkbox"></label>
+        <label><span>网页采样间隔</span><select id="social-web-interval"><option value="300">5 分钟</option><option value="900">15 分钟</option><option value="1800">30 分钟</option><option value="3600">60 分钟</option></select></label>
+      </div>
+      <div id="social-web-options" class="social-web-options"></div>
+      <p class="social-connection-note">来源许可：CC BY-NC-SA 3.0，仅限符合许可的非商业用途。样本以英语、印度市场讨论为主，不代表原四个平台。</p>
+      <p id="social-web-settings-status" class="quiet-note" role="status"></p>
+      <div id="social-web-diagnostics" class="social-web-diagnostics"></div>
+      <p id="social-web-settings-error" class="negative" role="alert"></p>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">关闭</button><button id="social-web-save" class="primary-button" type="submit" disabled>保存采集设置</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="social-settings-dialog" class="modal social-settings-modal">
+    <form id="social-settings-form">
+      <div class="modal-header"><h2>社交数据源</h2><button class="icon-button close-dialog" type="button" title="关闭">×</button></div>
+      <div class="social-settings-controls">
+        <label class="social-auto-field"><span>自动采集</span><input id="social-auto" type="checkbox"></label>
+        <label><span>采集间隔</span><select id="social-interval"><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option><option value="1800">30 分钟</option><option value="3600">60 分钟</option></select></label>
+      </div>
+      <label><span>平台</span><select id="social-config-platform"><option value="xiaohongshu">小红书</option><option value="douyin">抖音</option><option value="x">X</option><option value="threads">Threads</option></select></label>
+      <p id="social-connection-note" class="social-connection-note"></p>
+      <label><span id="social-feed-label">授权数据源地址（可选）</span><input id="social-feed-url" type="url" placeholder="https://" autocomplete="off"></label>
+      <label><span>授权令牌</span><input id="social-token" type="password" autocomplete="new-password" placeholder="留空保留现有令牌"></label>
+      <span id="social-token-status" class="quiet-note"></span>
+      <div class="social-settings-links"><a id="social-provider-link" target="_blank" rel="noopener noreferrer" class="text-button">平台文档 ↗</a><button id="social-clear-token" class="text-button" type="button">清除令牌</button></div>
+      <div id="social-connection-status" class="social-connection-status" role="status"></div>
+      <p id="social-settings-error" class="negative" role="alert"></p>
+      <div class="modal-actions"><button id="social-test-connection" class="secondary-button" type="button" disabled>验证已保存连接</button><button class="secondary-button close-dialog" type="button">关闭</button><button id="social-save-connection" class="primary-button" type="submit">保存连接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="social-import-dialog" class="modal">
+    <form id="social-import-form">
+      <div class="modal-header"><h2>导入公开帖子</h2><button class="icon-button close-dialog" type="button" title="关闭">×</button></div>
+      <label><span>平台</span><select name="platform"><option value="xiaohongshu">小红书</option><option value="douyin">抖音</option><option value="x">X</option><option value="threads">Threads</option></select></label>
+      <label><span>原帖链接</span><input name="url" type="url" required></label>
+      <label><span>发布时间（本地时间）</span><input name="published_at" type="datetime-local" required></label>
+      <label><span>公开作者名称（选填）</span><input name="author" maxlength="200"></label>
+      <label><span>帖子正文</span><textarea name="text" rows="5" maxlength="12000" required></textarea></label>
+      <label><span>或导入数据文件</span><input id="social-import-file" type="file" accept=".json,application/json"></label>
+      <p id="social-import-error" class="negative" role="alert"></p>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">取消</button><button class="primary-button" type="submit">导入并分析</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="stock-dialog" class="modal">
+    <form id="stock-form" method="dialog">
+      <div class="modal-header">
+        <div><p class="section-label">WATCHLIST</p><h2>新增监测股票</h2></div>
+        <button class="icon-button close-dialog" type="button" title="关闭">×</button>
+      </div>
+      <div class="form-grid two-columns">
+        <label><span>市场</span><select name="market" required><option value="CN">A 股</option><option value="HK">港股</option><option value="US">美股</option><option value="KR">韩国</option></select></label>
+        <label><span>股票代码</span><input name="symbol" required placeholder="例如 MU"></label>
+      </div>
+      <label><span>公司名称</span><input name="name" required placeholder="例如 Micron Technology"></label>
+      <label><span>新闻搜索条件</span><input name="query" placeholder="公司名 OR 中文名 OR 股票代码"></label>
+      <label><span>其他名称</span><input name="aliases" placeholder="多个名称用逗号分隔"></label>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">取消</button><button class="primary-button" type="submit">加入股票池</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="position-dialog" class="modal position-modal">
+    <form id="position-form" method="dialog">
+      <div class="modal-header">
+        <div><p class="section-label">NEW POSITION</p><h2>新增持仓</h2></div>
+        <button class="icon-button close-dialog" type="button" title="关闭">×</button>
+      </div>
+      <div class="form-grid two-columns">
+        <label><span>市场 / 资产</span><select name="market" id="position-market" required><option value="CN">A 股</option><option value="HK">港股</option><option value="US">美股</option><option value="KR">韩国</option><option value="FUND">中国公募基金（支付宝）</option></select></label>
+        <label><span>交易币种</span><select name="currency" id="position-currency" required><option value="CNY">CNY 人民币</option><option value="HKD">HKD 港币</option><option value="USD">USD 美元</option><option value="KRW">KRW 韩元</option></select></label>
+      </div>
+      <div class="fund-search-section" id="fund-search-section" hidden>
+        <label for="fund-search-query">检索中国公募基金</label>
+        <div class="fund-search-bar">
+          <input id="fund-search-query" autocomplete="off" placeholder="输入六位代码、基金名称或简拼">
+          <button class="secondary-button" id="fund-search-button" type="button">检索</button>
+        </div>
+        <div class="fund-search-results" id="fund-search-results" aria-live="polite"></div>
+        <small>数据来自天天基金；支持支付宝可查到的六位公募基金代码。</small>
+      </div>
+      <input name="fund_type" type="hidden">
+      <div class="form-grid two-columns">
+        <label><span id="position-symbol-label">股票代码</span><input name="symbol" id="position-symbol" required placeholder="例如 MU / 0700.HK"></label>
+        <label><span id="position-name-label">公司名称</span><input name="name" id="position-name" required placeholder="例如 Micron Technology"></label>
+      </div>
+      <div class="form-grid two-columns">
+        <label><span id="position-quantity-label">持仓数量</span><input name="quantity" type="number" min="0.000001" step="any" required placeholder="0"></label>
+        <label><span id="position-cost-label">平均成本</span><input name="average_cost" type="number" min="0.000001" step="any" required placeholder="0.00"></label>
+      </div>
+      <p class="form-note" id="position-form-note">纯数字代码会按市场自动补全后缀；新增持仓也会自动加入新闻监测池。</p>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">取消</button><button class="primary-button" type="submit">保存持仓</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="position-adjust-dialog" class="modal position-modal">
+    <form id="position-adjust-form" method="dialog">
+      <div class="modal-header">
+        <div><p class="section-label">POSITION CHANGE</p><h2 id="position-adjust-title">调整持仓</h2></div>
+        <button class="icon-button close-dialog" type="button" title="关闭">×</button>
+      </div>
+      <input type="hidden" name="market">
+      <input type="hidden" name="symbol">
+      <input type="hidden" name="action" value="buy">
+      <div class="position-action-control" id="position-action-control" aria-label="选择加仓或减仓">
+        <button class="active" data-position-action="buy" type="button">＋ 加仓</button>
+        <button data-position-action="sell" type="button">− 减仓</button>
+      </div>
+      <div class="form-grid two-columns">
+        <label><span>调整数量</span><input name="quantity" type="number" min="0.000001" step="any" required placeholder="0"></label>
+        <label><span>成交价格</span><input name="execution_price" type="number" min="0.000001" step="any" required placeholder="0.00"></label>
+      </div>
+      <p class="form-note" id="position-adjust-note">加仓将按成交价格重新计算平均成本。</p>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">取消</button><button class="primary-button" id="position-adjust-submit" type="submit">确认加仓</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="manual-dialog" class="modal">
+    <form id="manual-form" method="dialog">
+      <div class="modal-header">
+        <div><p class="section-label">MANUAL INPUT</p><h2>添加公告或新闻</h2></div>
+        <button class="icon-button close-dialog" type="button" title="关闭">×</button>
+      </div>
+      <label><span>对应股票</span><select name="watch_key" id="manual-watch-select" required></select></label>
+      <label><span>标题</span><input name="title" required placeholder="粘贴公告或新闻标题"></label>
+      <label><span>摘要</span><textarea name="summary" rows="4" placeholder="可选：粘贴关键内容"></textarea></label>
+      <label><span>原文链接</span><input name="url" type="url" placeholder="https://"></label>
+      <div class="modal-actions"><button class="secondary-button close-dialog" type="button">取消</button><button class="primary-button" type="submit">保存并分析</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog" class="modal detail-modal">
+    <article>
+      <div class="modal-header">
+        <div class="detail-meta"><span id="detail-market" class="market-badge"></span><span id="detail-event" class="event-badge"></span></div>
+        <button class="icon-button close-dialog" type="button" title="关闭">×</button>
+      </div>
+      <h2 id="detail-title"></h2>
+      <p id="detail-original" class="quiet-note"></p>
+      <p id="detail-news-summary" class="detail-analysis" hidden></p>
+      <p id="detail-source" class="detail-source"></p>
+      <div class="detail-score-row">
+        <div><span>综合信号</span><strong id="detail-score"></strong></div>
+        <div><span>影响期限</span><strong id="detail-horizon"></strong></div>
+      </div>
+      <p id="detail-analysis" class="detail-analysis"></p>
+      <div class="factor-grid" id="detail-factors"></div>
+      <div id="detail-risks" class="risk-list"></div>
+      <div class="modal-actions"><button id="detail-research" class="secondary-button" type="button">建立研究</button><a id="detail-link" class="secondary-button" target="_blank" rel="noopener noreferrer">查看原文 ↗</a><button class="primary-button close-dialog" type="button">关闭</button></div>
+    </article>
+  </dialog>
+
+  <dialog id="movement-dialog" class="modal movement-modal">
+    <article>
+      <div class="modal-header">
+        <div class="detail-meta"><span id="movement-detail-market" class="market-badge"></span><span id="movement-detail-type" class="event-badge"></span></div>
+        <button class="icon-button close-dialog" type="button" title="关闭">×</button>
+      </div>
+      <div>
+        <h2 id="movement-detail-title"></h2>
+        <p id="movement-detail-meta" class="detail-source"></p>
+      </div>
+      <div class="movement-quote-grid">
+        <div><span>最新价</span><strong id="movement-detail-price"></strong></div>
+        <div><span>日涨跌</span><strong id="movement-detail-change"></strong></div>
+        <div><span>相对量</span><strong id="movement-detail-volume"></strong></div>
+        <div><span>异动强度</span><strong id="movement-detail-intensity"></strong></div>
+      </div>
+      <div class="cause-heading">
+        <span>最可能原因</span>
+        <strong id="movement-detail-confidence"></strong>
+      </div>
+      <p id="movement-detail-reason" class="detail-analysis"></p>
+      <div class="movement-trump-factor" id="movement-trump-factor">
+        <span>Trump 因子</span>
+        <strong id="movement-trump-score">+0.00</strong>
+        <small id="movement-trump-reason">暂无相关动态</small>
+        <a id="movement-trump-link" target="_blank" rel="noopener noreferrer">查看相关帖 ↗</a>
+      </div>
+      <div class="evidence-block" id="movement-evidence-block">
+        <span>证据原文</span>
+        <strong id="movement-detail-evidence"></strong>
+        <small id="movement-detail-source"></small>
+      </div>
+      <p class="dialog-disclaimer">归因基于公开信息、发布时间与价格方向匹配，仅用于研究，不构成投资建议。</p>
+      <div class="modal-actions"><a id="movement-detail-link" class="secondary-button" target="_blank" rel="noopener noreferrer">查看证据原文 ↗</a><button class="primary-button close-dialog" type="button">关闭</button></div>
+    </article>
+  </dialog>
+
+  <dialog id="portfolio-chart-dialog" class="modal portfolio-chart-modal">
+    <article>
+      <div class="modal-header portfolio-chart-header">
+        <div class="portfolio-chart-identity">
+          <div class="detail-meta">
+            <span id="portfolio-chart-market" class="market-badge"></span>
+            <span id="portfolio-chart-kind" class="event-badge">日 K</span>
+          </div>
+          <h2 id="portfolio-chart-title">历史行情</h2>
+          <p id="portfolio-chart-symbol" class="detail-source"></p>
+        </div>
+        <button class="icon-button close-dialog" type="button" title="关闭" aria-label="关闭历史行情">×</button>
+      </div>
+      <div class="portfolio-chart-toolbar">
+        <div class="portfolio-chart-quote">
+          <span id="portfolio-chart-price-label">最新收盘</span>
+          <strong id="portfolio-chart-latest">--</strong>
+          <em id="portfolio-chart-change">--</em>
+        </div>
+        <div class="portfolio-chart-controls">
+          <div class="segmented-control portfolio-chart-modes" id="portfolio-chart-modes" aria-label="切换图表类型">
+            <button data-chart-mode="intraday" type="button">1 分钟 K</button>
+            <button class="active" data-chart-mode="daily" type="button">日 K</button>
+            <button data-chart-mode="weekly" type="button">周 K</button>
+          </div>
+          <div class="segmented-control portfolio-chart-periods" id="portfolio-chart-periods" aria-label="切换行情周期"></div>
+        </div>
+      </div>
+      <div class="portfolio-chart-metrics" aria-label="区间行情摘要">
+        <div><span id="portfolio-chart-high-label">区间最高</span><strong id="portfolio-chart-high">--</strong></div>
+        <div><span id="portfolio-chart-low-label">区间最低</span><strong id="portfolio-chart-low">--</strong></div>
+        <div><span>数据点</span><strong id="portfolio-chart-points">--</strong></div>
+        <div><span>周期</span><strong id="portfolio-chart-interval">日线</strong></div>
+      </div>
+      <div class="portfolio-chart-stage" id="portfolio-chart-stage">
+        <canvas id="portfolio-chart-canvas" aria-label="持仓历史行情图"></canvas>
+        <div class="portfolio-chart-tooltip" id="portfolio-chart-tooltip" hidden></div>
+        <div class="portfolio-chart-status" id="portfolio-chart-status">正在载入历史行情…</div>
+      </div>
+      <div id="portfolio-chart-navigator" class="portfolio-chart-navigator" hidden>
+        <input id="portfolio-chart-window" type="range" min="0" max="0" step="1" value="0" aria-label="分钟 K 线历史窗口">
+        <button id="portfolio-chart-latest-window" type="button">最新</button>
+      </div>
+      <section class="portfolio-technical-panel" id="portfolio-technical-panel" aria-live="polite">
+        <div class="portfolio-technical-heading">
+          <div>
+            <p class="section-label">TECHNICAL SIGNAL</p>
+            <h3 id="portfolio-technical-title">正在计算技术指标</h3>
+          </div>
+          <span class="portfolio-technical-badge" id="portfolio-technical-badge">等待数据</span>
+        </div>
+        <p class="portfolio-technical-summary" id="portfolio-technical-summary">均线、动量、量能与关键位置将显示在这里。</p>
+        <div class="portfolio-indicator-strip" id="portfolio-indicator-strip"></div>
+        <div class="portfolio-technical-signals" id="portfolio-technical-signals"></div>
+        <small id="portfolio-technical-disclaimer">技术指标用于观察趋势和风险，不构成买卖建议。</small>
+      </section>
+      <div class="portfolio-chart-footer">
+        <span id="portfolio-chart-note">股票显示真实日线开、高、低、收与成交量。</span>
+        <button id="portfolio-chart-retry" class="icon-button" type="button" title="重新加载行情" aria-label="重新加载行情" data-ui-icon="refresh-cw"></button>
+        <a id="portfolio-chart-source" target="_blank" rel="noopener noreferrer">打开数据源 ↗</a>
+      </div>
+    </article>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <script src="/startup_memory.js"></script>
+  <script src="/app.js"></script>
+  <script src="/social.js"></script>
+  <script src="/research.js"></script>
+  <script src="/earnings.js"></script>
+  <script src="/workbench.js"></script>
+  <script src="/annotations.js"></script>
+  <script src="/indices.js"></script>
+</body>
+</html>

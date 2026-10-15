@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="STock">
+  <title>STock · 连续信号</title>
+  <rect x="2" y="2" width="76" height="76" rx="16" fill="#285BB1"/>
+  <path d="M57 20H32C24 20 20 24 20 29C20 34 25 37 33 39L46 42C53 44 58 47 58 51C58 56 53 60 46 60H21"
+        fill="none" stroke="#F5F7FA" stroke-width="10" stroke-linecap="butt" stroke-linejoin="round"/>
+</svg>

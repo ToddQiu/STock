@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-news-monitor"
+version = "0.1.0"
+description = "A lightweight news event monitor for CN, HK, and US equities"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["protego>=0.3,<1", "defusedxml>=0.7,<1", "openpyxl>=3.1,<4", "tzdata; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+ai = ["openai>=2.0.0"]
+translation = ["sentencepiece==0.2.1"]
+
+[project.scripts]
+news-monitor = "quant_news_monitor.cli:main"
+news-monitor-ui = "quant_news_monitor.webapp:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+quant_news_monitor = ["ui/*", "company_landscape.json"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

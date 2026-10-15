@@ -36,4 +36,3 @@ project (`pip install -e .`), copy `config.example.json` to `config.json`,
 then run `python app.py`. The example configuration contains no holdings.
 Optional local translation models and Windows desktop binaries are not included.
 Never expose the desktop API directly to the public internet.
-
