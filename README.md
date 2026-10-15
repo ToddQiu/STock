@@ -18,9 +18,17 @@ python scripts/build_github_pages.py --output output/github-pages-release
 node --test tests/test_pages_core.mjs
 ```
 
-The generated repository uses `docs/` for the published site. On GitHub choose
-Settings > Pages > Deploy from a branch > main > /docs > Save.
-Publishing the repository does not, by itself, enable GitHub Pages.
+Live site: https://toddqiu.github.io/STock/
+
+The production site is published from the root of the `gh-pages` branch.
+The `main` branch keeps the application source and generated `docs/` files.
+To update the live site, test the generated files and publish the contents of
+`docs/` to the root of `gh-pages`, retaining `.nojekyll`. Updating `main` alone
+does not update the website. Do not publish desktop configuration or databases.
+
+For a separate deployment using `main/docs`, choose Settings > Pages >
+Deploy from a branch > main > /docs > Save. Do not switch the existing site's
+source unless intentionally changing the deployment method.
 
 To test locally, serve the generated directory with any static HTTP server,
 then open `/docs/`. Relative asset paths also work under `/STock/` on Pages.
