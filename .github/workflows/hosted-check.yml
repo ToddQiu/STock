@@ -1,0 +1,31 @@
+name: Full STock deployment checks
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'deploy/**', 'scripts/**', 'tests/test_deploy.py', 'tests/test_hosted*.py', 'translation_runtime/**', 'pyproject.toml', '.dockerignore', '.github/workflows/hosted-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hosted-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  full-backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Safe release, unit tests and package
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install .
+          PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_hosted*.py' -v
+          .venv/bin/python -m unittest discover -s tests -p test_deploy.py -v
+          node --test tests/test_pages_core.mjs
+          .venv/bin/python scripts/package_hosted.py --output output/ci-launch
+      - name: Real Linux image, persistence, translation and TLS proxy
+        run: |
+          cd output/ci-launch/source
+          bash deploy/container-check.sh

@@ -1,7 +1,7 @@
 name: stock
 services:
   app:
-    image: stock-full:local
+    image: ${STOCK_IMAGE:-stock-full:local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -24,7 +24,7 @@ services:
     logging:
       options: {max-size: 10m, max-file: "3"}
     healthcheck:
-      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8080),5); s.close()"]
+      test: [CMD, python, -c, "import http.client,os,urllib.parse; c=http.client.HTTPConnection('127.0.0.1',8080,timeout=5); c.request('GET','/api/health',headers={'Host':urllib.parse.urlsplit(os.environ['STOCK_PUBLIC_ORIGIN']).netloc}); assert c.getresponse().status == 401"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -48,8 +48,9 @@ services:
       options: {max-size: 10m, max-file: "3"}
 secrets:
   access_key:
-    file: ./secrets/access-key.txt
+    file: ${STOCK_KEY_FILE:-./secrets/access-key.txt}
 volumes:
   workspace:
+    name: ${STOCK_WORKSPACE_VOLUME:-stock_workspace}
   certificates:
   caddy_config:

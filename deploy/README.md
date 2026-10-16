@@ -21,13 +21,21 @@
 
 采购确认必须包含：具体规格族与线路、首期实付、续费、流量或超额费用、快照/备份费用、总额。套餐不合适时再比较同配置 ECS，不自动购买 GPU、RDS、付费证书、负载均衡或模型套餐。
 
-2026-10-16 实际打开官方购买入口后被要求登录，未取得账号内报价，未创建订单。下一步是所有者登录后核价，不使用第三方活动文章的价格代替订单金额。
+2026-10-16 已在登录后的购买页核对：中国香港通用型，4 vCPU / 8 GiB、70 GiB、Ubuntu 24.04、1 台 / 1 个月，应付 224 元，无固定流量、峰值 200 Mbps、1 IPv4，自动续费未勾选。用户决定暂不购买、等待资金到位；未下单、未付款。该价格不是未来续费承诺，购买前需重新核价。官方计费说明确认“无固定流量”套餐不另收超额流量费，套餐内快照免费但有数量限制。
 
 官方依据：[产品页](https://www.aliyun.com/product/swas)、[计费项](https://help.aliyun.com/zh/simple-application-server/product-overview/billable-items)、[Docker 与 Compose 部署](https://www.alibabacloud.com/help/zh/simple-application-server/use-cases/manually-deploy-docker)。
 
 先完成安全组、域名解析和适用的备案/内容授权检查。以下命令用于服务器，不能视为已执行成功。费用、实例购买仍由所有者确认。
 
-## 启动
+## 推荐：一次运行上线包
+
+操作入口和上线当天的四项条件见 [待上线操作卡](READY-TO-LAUNCH.md)。`scripts/package_hosted.py` 复用公开发布白名单，生成压缩包、SHA256、Windows 启动入口和服务器部署程序。它不会打包本机持仓与密钥，也不会调用任何采购 API。
+
+`Launch-STock.ps1 -CheckOnly` 完全离线。实际部署会验证 SSH 指纹、DNS 与指定 IP、包校验和，安装官方 Docker，构建原后台和本地翻译模型，启动 HTTPS，验证认证及完整页面/API。升级前备份，失败尝试回退到旧镜像与升级前快照；恢复使用新卷，不删除新版本的数据。
+
+部署状态、密码和备份位于服务器 `/opt/stock`，主目录权限 0700。默认使用固定 Compose 项目名 `stock`，仅用于专用服务器上的一个受邀共享工作区。已有业务机器、多实例或需要每人私有账户的场景不能直接套用该入口。
+
+## 手动启动（可选）
 
 1. 拉取仓库，进入根目录。仓库中的 `config.example.json` 是脱敏模板；不要替换成本机个人配置。
 
