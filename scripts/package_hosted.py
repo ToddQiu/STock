@@ -23,7 +23,7 @@ def package(output):
     with archive.open("rb") as handle:
         checksum = hashlib.file_digest(handle, "sha256").hexdigest()
     (output / "STock-release.sha256").write_text(checksum + "\n", encoding="ascii")
-    for name in ("Launch-STock.ps1", "Launch-STock.cmd", "manage.py", "READY-TO-LAUNCH.md"):
+    for name in ("Launch-STock.ps1", "Launch-STock.cmd", "READY-TO-LAUNCH.md"):
         shutil.copyfile(ROOT / "deploy" / name, output / name)
     result.update(archive=str(archive), sha256=checksum)
     return result

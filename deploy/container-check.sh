@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 test "${GITHUB_ACTIONS:-}" = true || { echo 'Disposable GitHub CI only; never run on a production host.'; exit 1; }
+[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] || exit 1
 export STOCK_DOMAIN=stock.test STOCK_WORKSPACE_VOLUME="stock_ci_${GITHUB_RUN_ID}"
 export STOCK_KEY_FILE="$PWD/deploy/secrets/access-key.txt"
 mkdir -p deploy/secrets
@@ -24,6 +25,7 @@ cleanup() {
   "${compose[@]}" logs --tail=60 || true
   # This script is explicitly restricted to disposable CI, not a real shared workspace.
   "${compose[@]}" down --volumes || true
+  docker volume rm "stock_ci_${GITHUB_RUN_ID}" "stock_ci_${GITHUB_RUN_ID}_restored" 2>/dev/null || true
 }
 trap cleanup EXIT
 "${compose[@]}" config --quiet
@@ -32,7 +34,14 @@ trap cleanup EXIT
 "${compose[@]}" exec -T app python - < deploy/check-container.py
 "${compose[@]}" restart app
 "${compose[@]}" up -d --wait --wait-timeout 180
+# Exercise the same stop/archive/restore commands used by the production manager.
+"${compose[@]}" stop app
+"${compose[@]}" run --rm --no-deps -T --entrypoint tar app -C /var/lib/stock -czf - . > deploy/ci-backup.tar.gz
+export STOCK_WORKSPACE_VOLUME="stock_ci_${GITHUB_RUN_ID}_restored"
+"${compose[@]}" run --rm --no-deps -T --entrypoint tar app -C /var/lib/stock -xzf - --no-same-owner < deploy/ci-backup.tar.gz
+"${compose[@]}" up -d --wait --wait-timeout 180
 "${compose[@]}" exec -T app python - --persist < deploy/check-container.py
+echo 'Backup restored into a fresh Docker volume with persisted principal intact.'
 "${compose[@]}" exec -T https cat /data/caddy/pki/authorities/local/root.crt > deploy/ci-ca.crt
 test "$(curl --silent --show-error --cacert deploy/ci-ca.crt --resolve stock.test:8443:127.0.0.1 \
   -H 'Host: stock.test' -o /dev/null -w '%{http_code}' https://stock.test:8443/api/health)" = 401

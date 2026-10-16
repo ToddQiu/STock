@@ -151,7 +151,11 @@ class Deployment:
         # A second launcher must not modify the same instance during a backup or rollout.
         import fcntl
         self.lock = (self.root / "deploy.lock").open("w")
-        fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BaseException:
+            self.lock.close()
+            raise
 
     def read_state(self, name="current.json"):
         path = self.root / name

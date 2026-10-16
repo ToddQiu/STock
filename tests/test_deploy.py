@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import tarfile
@@ -16,6 +17,21 @@ spec.loader.exec_module(deploy)
 
 
 class DeploymentTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'Linux deployment lock')
+    def test_deployment_root_and_concurrent_run_are_protected(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'private.txt').write_text('private')
+            with self.assertRaises(ValueError):
+                deploy.Deployment(root)
+            first = deploy.Deployment(root / 'dedicated')
+            try:
+                with self.assertRaises(BlockingIOError):
+                    deploy.Deployment(root / 'dedicated')
+                self.assertEqual((root / 'private.txt').read_text(), 'private')
+            finally:
+                first.lock.close()
+
     def make_bundle(self, root, *, extra=None, damaged=False):
         files = {"deploy/compose.yaml": b"services: {}", "deploy/Dockerfile": b"FROM python",
                  "config.example.json": b"{}"}

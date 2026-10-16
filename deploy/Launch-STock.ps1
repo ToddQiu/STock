@@ -10,8 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $archive = Join-Path $PSScriptRoot 'STock-release.tar.gz'
 $checksumFile = Join-Path $PSScriptRoot 'STock-release.sha256'
-$manager = Join-Path $PSScriptRoot 'manage.py'
-foreach ($file in @($archive, $checksumFile, $manager)) {
+foreach ($file in @($archive, $checksumFile)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing release file: $file" }
 }
 $expected = (Get-Content -LiteralPath $checksumFile -Raw).Trim()
@@ -38,7 +37,9 @@ if ($Action -eq 'install') {
         throw 'Invalid DNS hostname.'
     }
 }
-Get-Command ssh.exe, scp.exe -ErrorAction Stop | Out-Null
+Get-Command ssh.exe, scp.exe, tar.exe -ErrorAction Stop | Out-Null
+$managerCode = (& tar.exe -xOf $archive deploy/manage.py) -join "`n"
+if ($LASTEXITCODE -ne 0 -or -not $managerCode) { throw 'Verified release has no deployment program.' }
 $sshOptions = @('-o', 'StrictHostKeyChecking=yes', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15')
 if ($IdentityFile) {
     $keyPath = (Resolve-Path -LiteralPath $IdentityFile).Path
@@ -59,7 +60,7 @@ if ($Action -eq 'install') {
 $oldEncoding = $OutputEncoding
 try {
     $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-    Get-Content -LiteralPath $manager -Raw | & ssh.exe @sshOptions -p $Port $Server "$remotePython - $arguments"
+    $managerCode | & ssh.exe @sshOptions -p $Port $Server "$remotePython - $arguments"
     if ($LASTEXITCODE -ne 0) { throw 'Deployment command failed. See the error above; no successful launch is claimed.' }
 } finally {
     $OutputEncoding = $oldEncoding
