@@ -1,4 +1,19 @@
-# STock GitHub Pages Edition
+# STock
+
+## Full application hosting
+
+The full Python web application is in `src/quant_news_monitor/`.
+The invite-only deployment package in [deploy/README.md](deploy/README.md) retains
+the existing UI, collectors, portfolio, charts, news, sentiment and research APIs.
+It uses an isolated empty workspace, access-key authentication, persistent SQLite
+and an HTTPS reverse proxy. It is a shared invited workspace, not a multi-user SaaS.
+
+**The full backend is not deployed yet.** The link below is still only the older
+static research edition. A persistent server and an actual HTTPS acceptance test
+are required; adding Docker files to GitHub does not deploy a server.
+See [verification status](deploy/VERIFICATION.md).
+
+## GitHub Pages edition
 
 This directory is a standalone, static research reader for GitHub Pages.
 It is not the Python desktop application's backend.

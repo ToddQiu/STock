@@ -9,4 +9,6 @@ __pycache__/
 *.db*
 *.log
 node_modules/
+deploy/secrets/
+.hosted-runtime/
 STock-research-notes*.json

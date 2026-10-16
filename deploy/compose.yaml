@@ -1,0 +1,55 @@
+name: stock
+services:
+  app:
+    image: stock-full:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      STOCK_PUBLIC_ORIGIN: https://${STOCK_DOMAIN:?Set STOCK_DOMAIN to your real hostname}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    volumes:
+      - workspace:/var/lib/stock
+    secrets:
+      - access_key
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: 3g
+    logging:
+      options: {max-size: 10m, max-file: "3"}
+    healthcheck:
+      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8080),5); s.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+  https:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      STOCK_DOMAIN: ${STOCK_DOMAIN:?Set STOCK_DOMAIN}
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      options: {max-size: 10m, max-file: "3"}
+secrets:
+  access_key:
+    file: ./secrets/access-key.txt
+volumes:
+  workspace:
+  certificates:
+  caddy_config:

@@ -1,0 +1,7 @@
+{
+  "name": "quantify-local-translation",
+  "private": true,
+  "type": "module",
+  "scripts": { "setup": "node --use-env-proxy prepare.mjs --download" },
+  "dependencies": { "@huggingface/transformers": "3.8.1" }
+}

@@ -39,14 +39,20 @@ def publication_files() -> dict[str, bytes]:
     files['docs/.nojekyll'] = b''
     files['.nojekyll'] = b''
     files['README.md'] = (ROOT / 'pages/README.md').read_bytes()
-    files['.gitignore'] = b'config.json\n.env*\ndata/\noutput/\noutputs/\n.venv/\n__pycache__/\n*.py[cod]\n*.db*\n*.log\nnode_modules/\nSTock-research-notes*.json\n'
+    files['.gitignore'] = b'config.json\n.env*\ndata/\noutput/\noutputs/\n.venv/\n__pycache__/\n*.py[cod]\n*.db*\n*.log\nnode_modules/\ndeploy/secrets/\n.hosted-runtime/\nSTock-research-notes*.json\n'
     for path in (ROOT / 'src').rglob('*'):
         if path.is_file() and path.suffix in SOURCE_EXTENSIONS and '__pycache__' not in path.parts:
             files[path.relative_to(ROOT).as_posix()] = path.read_bytes()
     for name in ('app.py', 'monitor.py', 'pyproject.toml'):
         files[name] = (ROOT / name).read_bytes()
     for name in (*('pages/' + name for name in (*PAGE_FILES, 'README.md')),
-                 'scripts/build_github_pages.py', 'tests/test_pages_core.mjs'):
+                 'scripts/build_github_pages.py', 'tests/test_pages_core.mjs',
+                 '.dockerignore', 'deploy/Dockerfile', 'deploy/compose.yaml', 'deploy/Caddyfile',
+                 'deploy/README.md', 'deploy/VERIFICATION.md',
+                 'scripts/prepare_hosted_translation.py', 'tests/test_hosted.py',
+                 'tests/test_hosted_translation.py',
+                 'translation_runtime/package.json', 'translation_runtime/package-lock.json',
+                 'translation_runtime/worker.mjs', 'translation_runtime/prepare.mjs'):
         files[name] = (ROOT / name).read_bytes()
     config_path = ROOT / 'desktop/default-config.json'
     if not config_path.is_file():

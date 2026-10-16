@@ -1,0 +1,11 @@
+{$STOCK_DOMAIN} {
+    header Strict-Transport-Security "max-age=31536000"
+    request_body {
+        max_size 2MB
+    }
+    reverse_proxy app:8080 {
+        transport http {
+            response_header_timeout 90s
+        }
+    }
+}
