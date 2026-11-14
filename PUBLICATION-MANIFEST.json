@@ -1,6 +1,6 @@
 {
   ".dockerignore": "f08468a68c2aa95f7ec3c5f5ba4a80432de770d864b351f2099e170b3c0b6691",
-  ".github/workflows/hosted-check.yml": "d19b279507e6d5f4206f8ec221baea075b8fce51c4c3bb3df39e07b3dde1e0f2",
+  ".github/workflows/hosted-check.yml": "953f9b82b1d425d8d57b9aed3333a9a474afd416463df3a6aab9e436af5ac663",
   ".gitignore": "299bd551125c470b91a0fcb8fd7efc4369a23ada387e0ad34d38099c3fe1d3d2",
   ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "app.py": "5e72406b557511c6f4ddcbcee7da68ceb1739651533a1e0aea1da18d9f6d4a39",
@@ -215,5 +215,8 @@
   "translation_runtime/package-lock.json": "fe3d325530f504ec3438a1ab124f21b029218d361972be963578a7702203d0f5",
   "translation_runtime/package.json": "bf31ba0c1dd6d1b25ea640d44662a832b9e53527713c5c6ba908434042daf3bc",
   "translation_runtime/prepare.mjs": "bc301f1bc29c0cf1697711d1806322024d3bd578f0088724abce9eae41602bd1",
-  "translation_runtime/worker.mjs": "d6d4741e41077394e24cc70c7ebfc42be667118cb8c526b71aff0bc2ac18ba77"
+  "translation_runtime/worker.mjs": "d6d4741e41077394e24cc70c7ebfc42be667118cb8c526b71aff0bc2ac18ba77",
+  ".github/workflows/windows-release.yml": "2844f9a7e5f0f98f04303e8c4746cc1621e4cdffb7df7686e16569543d661219",
+  "tests/check_desktop_installer.py": "ab56e55c8513cd1e6e6d6b75270894da5ed21adcebd7475a3582d5b02b48b456",
+  "tests/check_portable_package.cjs": "0f181e1399c080933b9b2ddccc9309769337d332bdb1bc84c384de892884b84c"
 }

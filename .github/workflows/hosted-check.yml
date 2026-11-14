@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  TZ: Asia/Shanghai
 concurrency:
   group: hosted-check-${{ github.ref }}
   cancel-in-progress: true
