@@ -49,8 +49,10 @@ def check(setup: Path, node: Path, node_modules: Path):
         report["checks"].append("Windows uninstall registration points to this exact installation")
         env = {**os.environ, "NODE_PATH": str(node_modules)}
         result = subprocess.run([str(node), str(ROOT / "tests/check_portable_package.cjs"), str(target)],
-                                check=True, capture_output=True, text=True, encoding="utf-8",
+                                capture_output=True, text=True, encoding="utf-8",
                                 env=env, creationflags=flags, timeout=600)
+        if result.returncode:
+            raise RuntimeError(result.stdout + '\n' + result.stderr)
         smoke = json.loads(result.stdout)
         report["smoke"] = smoke
         profile = Path(smoke["profile"])

@@ -122,4 +122,11 @@ async function close(app,url){
   }finally{
     if(current && current.app.process().exitCode===null)await current.app.close();
   }
-})().catch(error=>{console.error(error);console.error(`QA profile: ${profile}`);process.exitCode=1;});
+})().catch(error=>{
+  console.error(error);console.error(JSON.stringify(report));
+  for(const name of ['desktop-launch.log','desktop-service.log']){
+    const file=path.join(profile,name);
+    if(fs.existsSync(file))console.error(name+'\n'+fs.readFileSync(file,'utf8').slice(-10000));
+  }
+  process.exitCode=1;
+});

@@ -53,11 +53,22 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --test tests/test_desktop_workbench.cjs tests/test_startup_memory.cjs tests/test_portfolio_cash.cjs tests/test_portfolio_currency.cjs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Build empty-profile installer
+      - name: Build empty-profile application
+        run: |
+          python scripts/build_desktop_package.py --node (Get-Command node).Source
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Verify application before compression
+        run: |
+          $env:NODE_PATH = "$PWD/.qa-runtime/node_modules"
+          $payload = Get-ChildItem dist -Directory | Select-Object -First 1
+          node tests/check_portable_package.cjs $payload.FullName
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build installer
         run: |
           $compiler = 'C:\Program Files (x86)\NSIS\makensis.exe'
           if (!(Test-Path -LiteralPath $compiler)) { throw 'NSIS compiler missing' }
-          python scripts/build_desktop_package.py --node (Get-Command node).Source --installer $compiler
+          $payload = Get-ChildItem dist -Directory | Select-Object -First 1
+          python scripts/build_desktop_package.py --folder $payload.FullName --installer $compiler
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Install, launch and uninstall in isolation
         run: |
