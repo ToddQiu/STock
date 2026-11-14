@@ -1,5 +1,6 @@
 // Runs the distributable with an empty, separate profile and no developer runtimes on PATH.
-const { _electron: electron }=require('playwright');
+const { chromium }=require('playwright');
+const {spawn}=require('node:child_process');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {once}=require('node:events');
 const http=require('node:http');
@@ -12,33 +13,42 @@ Object.assign(env,{HTTP_PROXY:'http://127.0.0.1:9',HTTPS_PROXY:'http://127.0.0.1
 for(const key of Object.keys(env))if(/^(ELECTRON_RUN_AS_NODE|NODE_PATH|PYTHONPATH|PYTHONHOME|VIRTUAL_ENV|OPENAI_API_KEY|X_BEARER_TOKEN|THREADS_ACCESS_TOKEN)$/i.test(key))delete env[key];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function launch(){
-  const app=await electron.launch({executablePath:path.join(folder,'STock.exe'),args:['--smoke-test'],cwd:profile,env,timeout:120000});
+  const child=spawn(path.join(folder,'STock.exe'),['--remote-debugging-port=0','--smoke-test'],{cwd:profile,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  let browser,logs='';
+  const endpoint=new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(Error('Desktop debugging endpoint timed out')),120000);
+    child.stderr.on('data',chunk=>{logs+=chunk;const match=logs.match(/DevTools listening on (ws:\/\/[^\s]+)/);if(match){clearTimeout(timer);resolve(match[1]);}});
+    child.once('error',error=>{clearTimeout(timer);reject(error);});
+    child.once('exit',code=>{clearTimeout(timer);reject(Error('Desktop exited '+code+'\n'+logs));});
+  });
   try{
-    const page=await app.firstWindow({timeout:120000});page.on('pageerror',error=>errors.push(error.message));
+    browser=await chromium.connectOverCDP(await endpoint);
+    const context=browser.contexts()[0];
+    const page=context.pages()[0]||await context.waitForEvent('page',{timeout:120000});
+    page.on('pageerror',error=>errors.push(error.message));
     await page.waitForFunction(()=>typeof startupMemory!=='undefined' && startupMemory.ready && Boolean(state.dashboard),undefined,{timeout:120000});
-    assert.equal(await app.evaluate(({app})=>app.isPackaged),true);
-    assert.equal(await app.evaluate(({app})=>app.getPath('userData')),profile);
-    return {app,page};
+    assert.ok(fs.existsSync(path.join(profile,'config.json')));
+    assert.equal(await page.evaluate(()=>typeof window.stockWindow?.close),'function');
+    return {app:{child,browser,page},page};
   }catch(error){
     try{
-      const windows=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().map(w=>({url:w.webContents.getURL(),loading:w.webContents.isLoading(),visible:w.isVisible()})));
-      console.error('Window diagnostics:',JSON.stringify(windows));
       const port=JSON.parse(fs.readFileSync(path.join(profile,'service-port.json'),'utf8'));
       const response=await fetch(`http://127.0.0.1:${port}/`,{signal:AbortSignal.timeout(5000)});
       console.error('Local HTML:',response.status,(await response.text()).length);
     }catch(diagnostic){console.error('Diagnostic:',diagnostic.message);}
-    await app.close();throw error;
+    console.error(logs);await browser?.close().catch(()=>{});if(child.exitCode===null)child.kill();throw error;
   }
 }
 async function close(app,url){
-  const child=app.process(),exit=once(child,'exit');
-  await app.evaluate(({app})=>app.quit());
+  const child=app.child,exit=once(child,'exit');
+  await app.page.evaluate(()=>window.stockWindow.close());
   let timeout,result;
   try{
     result=await Promise.race([exit,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Desktop did not exit cleanly')),65000);})]);
   }finally{clearTimeout(timeout);}
   const [code]=result;
   assert.equal(code,0);
+  await app.browser.close();
   let stopped=false;
   for(let i=0;i<30;i++){
     try{await fetch(new URL('/api/health',url),{signal:AbortSignal.timeout(1000)});}
@@ -129,7 +139,7 @@ async function close(app,url){
     fs.writeFileSync(path.join(profile,'verification.json'),JSON.stringify(report,null,2));
     console.log(JSON.stringify(report,null,2));
   }finally{
-    if(current && current.app.process().exitCode===null)await current.app.close();
+    if(current && current.app.child.exitCode===null)await close(current.app,current.page.url());
   }
 })().catch(error=>{
   console.error(error);console.error(JSON.stringify(report));
