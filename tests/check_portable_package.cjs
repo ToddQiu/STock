@@ -14,12 +14,21 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function launch(){
   const app=await electron.launch({executablePath:path.join(folder,'STock.exe'),args:['--smoke-test'],cwd:profile,env,timeout:120000});
   try{
-    const page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message));
+    const page=await app.firstWindow({timeout:120000});page.on('pageerror',error=>errors.push(error.message));
     await page.waitForFunction(()=>typeof startupMemory!=='undefined' && startupMemory.ready && Boolean(state.dashboard),undefined,{timeout:120000});
     assert.equal(await app.evaluate(({app})=>app.isPackaged),true);
     assert.equal(await app.evaluate(({app})=>app.getPath('userData')),profile);
     return {app,page};
-  }catch(error){await app.close();throw error;}
+  }catch(error){
+    try{
+      const windows=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().map(w=>({url:w.webContents.getURL(),loading:w.webContents.isLoading(),visible:w.isVisible()})));
+      console.error('Window diagnostics:',JSON.stringify(windows));
+      const port=JSON.parse(fs.readFileSync(path.join(profile,'service-port.json'),'utf8'));
+      const response=await fetch(`http://127.0.0.1:${port}/`,{signal:AbortSignal.timeout(5000)});
+      console.error('Local HTML:',response.status,(await response.text()).length);
+    }catch(diagnostic){console.error('Diagnostic:',diagnostic.message);}
+    await app.close();throw error;
+  }
 }
 async function close(app,url){
   const child=app.process(),exit=once(child,'exit');

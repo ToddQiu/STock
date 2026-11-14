@@ -1,4 +1,5 @@
 name: Windows installer release
+# Validate the packaged first window before spending time compressing the installer.
 on:
   push:
     branches: [main]

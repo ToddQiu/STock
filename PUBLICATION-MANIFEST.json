@@ -216,8 +216,8 @@
   "translation_runtime/package.json": "bf31ba0c1dd6d1b25ea640d44662a832b9e53527713c5c6ba908434042daf3bc",
   "translation_runtime/prepare.mjs": "bc301f1bc29c0cf1697711d1806322024d3bd578f0088724abce9eae41602bd1",
   "translation_runtime/worker.mjs": "d6d4741e41077394e24cc70c7ebfc42be667118cb8c526b71aff0bc2ac18ba77",
-  ".github/workflows/windows-release.yml": "5e08a915b712250d254f7d9656dd38ae201e4d70f4bff87af2752e06c6f87e79",
+  ".github/workflows/windows-release.yml": "f46d862ad336c156eb45b5bb350435782e676dbfccf3446075447a0275e74e00",
   "tests/check_desktop_installer.py": "5c7b45031cda63042b1592024ebfdbc3cd97eb90fe24b4647845bde44e38843e",
-  "tests/check_portable_package.cjs": "078e3d4003c625781d97f5f0b3302190f9d7363cb0c8e5c521540553483206f6",
+  "tests/check_portable_package.cjs": "99203ff7c867ae7d309a22e3ebca2e9833d9f5d9b43b2caa9d0acf2a1fa05f0f",
   "tests/test_empty_watchlist.py": "71c70450b98c746137728e9e18ab5b97031affc102ec480643e0fab457a20667"
 }
