@@ -32,7 +32,7 @@ class NewsMonitor:
     ):
         self.config = config
         self.sources = sources
-        if isinstance(analyzer, RuleAnalyzer):
+        if hasattr(analyzer, "watchlist"):
             analyzer.watchlist = config.watchlist
         self.ledger = ResearchLedger(config.storage.database.parent / "research.db")
         self.analyzer = RecordingAnalyzer(analyzer,self.ledger)
@@ -71,7 +71,8 @@ class NewsMonitor:
         analyzed = 0
         alerts: list[Alert] = []
         analyzer_id = getattr(self.analyzer, "analysis_id", self.analyzer.name)
-        for item in self.store.pending_items(analyzer=analyzer_id, eligible=eligible):
+        batch_limit = 500 if isinstance(self.analyzer.analyzer, RuleAnalyzer) else 20
+        for item in self.store.pending_items(limit=batch_limit, analyzer=analyzer_id, eligible=eligible):
             try:
                 watch = watches[(item.market, item.symbol)]
                 item = replace(item, target_name=watch.name, target_aliases=watch.aliases)
@@ -79,7 +80,7 @@ class NewsMonitor:
                 self.store.save_analysis(item, analysis, utc_now())
                 analyzed += 1
             except Exception as exc:
-                self.store.save_error(item, f"{type(exc).__name__}: {exc}")
+                self.store.save_error(item, f"{type(exc).__name__}: {exc}", analyzer=analyzer_id)
                 errors.append(f"分析 {item.symbol} / {item.title[:40]} 失败: {exc}")
                 continue
 

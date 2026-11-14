@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -105,6 +106,15 @@ class Analysis:
 
     @property
     def score(self) -> float:
+        if not all(math.isfinite(v) for v in (self.direction, self.importance, self.surprise, self.relevance, self.confidence)):
+            return 0.0
+        if self.metadata.get("direction_eligible") is False:
+            return 0.0
+        if self.metadata.get("judgment_version") == "evidence-v1":
+            # Confidence and target relevance are gates, not additive reasons to
+            # believe an otherwise unsupported direction. This is not a return forecast.
+            magnitude = (0.75 * self.importance + 0.25 * self.surprise)
+            return max(-1.0, min(1.0, self.direction * magnitude * self.confidence * self.relevance))
         magnitude = (
             0.35 * self.importance
             + 0.30 * self.surprise
@@ -173,3 +183,4 @@ class MarketMovement:
     evidence_source: str = ""
     evidence_published_at: datetime | None = None
     analyzer: str = "rules-v1"
+    reason_details: dict = field(default_factory=dict)

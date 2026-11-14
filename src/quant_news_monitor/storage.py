@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterator
+from urllib.parse import urlsplit
 
-from .models import Alert, Analysis, MarketMovement, NewsItem, iso_utc, news_event_key, parse_datetime, utc_now
+from .models import Alert, Analysis, MarketMovement, NewsItem, canonical_news_url, iso_utc, news_event_key, parse_datetime, utc_now
 from .news_impact import explain_news_impact
+from .movement_reason import REASON_VERSION, legacy_movement_reason
 
 
 SCHEMA = """
@@ -75,6 +78,7 @@ CREATE TABLE IF NOT EXISTS market_movements (
     evidence_source TEXT NOT NULL,
     evidence_published_at TEXT,
     analyzer TEXT NOT NULL,
+    reason_details TEXT,
     PRIMARY KEY (scan_id, market, symbol)
 );
 
@@ -83,16 +87,66 @@ ON market_movements(scan_id DESC, intensity_score DESC);
 """
 
 
+def _article_url(url: str) -> str:
+    canonical = canonical_news_url(url)
+    parsed = urlsplit(canonical)
+    # Home pages are not article identities; never merge unrelated headlines pointing there.
+    return canonical if parsed.path not in {"", "/"} or parsed.query else ""
+
+
+def _analysis_metadata(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _direction_eligible(metadata: dict) -> bool:
+    return (metadata.get("judgment_version") == "evidence-v1"
+            and metadata.get("direction_eligible") is True
+            and metadata.get("evidence_status") == "supported")
+
+
 class NewsStore:
+    _schema_lock = threading.RLock()
+    _initialized: dict[Path, tuple] = {}
+
     def __init__(self, database_path: Path):
-        self.database_path = database_path
+        self.database_path = Path(database_path).resolve()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._schema_lock:
+            token = self._file_token()
+            if token is not None and self._initialized.get(self.database_path) == token:
+                return
+            self._initialize_schema()
+            if len(self._initialized) > 256:
+                self._initialized.clear()
+            self._initialized[self.database_path] = self._file_token()
+
+    def _file_token(self):
+        try:
+            stat = self.database_path.stat()
+            return (stat.st_dev, stat.st_ino, getattr(stat, "st_birthtime_ns", 0))
+        except FileNotFoundError:
+            return None
+
+    def _initialize_schema(self):
         with self._session() as connection:
             # Frequent UI reads must not prevent the collector from committing updates.
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
+            movement_columns = {row[1] for row in connection.execute("PRAGMA table_info(market_movements)")}
+            if "reason_details" not in movement_columns:
+                try:
+                    connection.execute("ALTER TABLE market_movements ADD COLUMN reason_details TEXT")
+                except sqlite3.OperationalError:
+                    if "reason_details" not in {row[1] for row in connection.execute("PRAGMA table_info(market_movements)")}:
+                        raise
             columns = {row[1] for row in connection.execute("PRAGMA table_info(news_items)")}
-            for column in ("analysis_metadata", "event_key"):
+            for column in ("analysis_metadata", "event_key", "retry_after", "attempted_analyzer", "article_url", "superseded_by"):
                 if column not in columns:
                     try:
                         connection.execute(f"ALTER TABLE news_items ADD COLUMN {column} TEXT")
@@ -100,10 +154,44 @@ class NewsStore:
                         if column not in {row[1] for row in connection.execute("PRAGMA table_info(news_items)")}:
                             raise
             connection.execute("CREATE INDEX IF NOT EXISTS idx_news_event ON news_items(event_key)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_news_article ON news_items(market, symbol, article_url)")
+            connection.execute("""CREATE INDEX IF NOT EXISTS idx_news_current_published
+                ON news_items(published_at DESC, fingerprint)
+                WHERE superseded_by IS NULL AND analyzed_at IS NOT NULL""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC, fingerprint)")
+            connection.execute("CREATE VIEW IF NOT EXISTS current_news_items AS SELECT * FROM news_items WHERE superseded_by IS NULL")
+            # Add provenance without rewriting fingerprints or deleting historical observations.
+            for row in connection.execute("SELECT fingerprint, url FROM news_items WHERE article_url IS NULL").fetchall():
+                connection.execute("UPDATE news_items SET article_url=? WHERE fingerprint=?", (_article_url(row['url']), row['fingerprint']))
+            if "superseded_by" not in columns:
+                connection.execute("""WITH revisions AS (
+                    SELECT fingerprint, FIRST_VALUE(fingerprint) OVER (
+                        PARTITION BY market, symbol, article_url ORDER BY published_at DESC, discovered_at DESC, rowid DESC
+                    ) AS latest FROM news_items WHERE article_url!=''
+                ) UPDATE news_items SET superseded_by=(SELECT latest FROM revisions WHERE revisions.fingerprint=news_items.fingerprint)
+                WHERE fingerprint IN (SELECT fingerprint FROM revisions WHERE fingerprint!=latest)""")
+            # Retain the old judgment for audit, but never trade on unvalidated legacy scores.
+            legacy_rows = connection.execute("""SELECT * FROM news_items WHERE analyzed_at IS NOT NULL
+                AND COALESCE(CASE WHEN json_valid(analysis_metadata)
+                    THEN json_extract(analysis_metadata, '$.judgment_version') END, '') != 'evidence-v1'""").fetchall()
+            for row in legacy_rows:
+                metadata = _analysis_metadata(row["analysis_metadata"])
+                old_alert = connection.execute("SELECT * FROM alerts WHERE fingerprint=?", (row["fingerprint"],)).fetchone()
+                metadata["legacy_judgment"] = {key: row[key] for key in (
+                    "analyzed_at", "analyzer", "direction", "score", "confidence", "importance",
+                    "surprise", "relevance", "analysis_summary", "risk_flags",
+                )}
+                if old_alert:
+                    metadata["legacy_judgment"]["alert"] = dict(old_alert)
+                metadata.update(judgment_version="evidence-v1", evidence_status="legacy", direction_eligible=False)
+                connection.execute("""UPDATE news_items SET direction=0, score=0, confidence=0,
+                    analysis_summary='旧版判断待重新核实，暂不计入利多利空信号。', risk_flags='[]',
+                    analysis_metadata=? WHERE fingerprint=?""", (json.dumps(metadata, ensure_ascii=False), row["fingerprint"]))
+                connection.execute("DELETE FROM alerts WHERE fingerprint=?", (row["fingerprint"],))
 
     @contextmanager
     def _session(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(self.database_path, timeout=15)
         connection.row_factory = sqlite3.Row
         try:
             yield connection
@@ -120,7 +208,7 @@ class NewsStore:
             for item in items:
                 connection.execute(
                     """UPDATE news_items SET news_summary=?, source=?, published_at=?, analyzed_at=NULL,
-                    attempts=0, last_error=NULL, score=NULL WHERE fingerprint=?
+                    attempts=0, last_error=NULL, retry_after=NULL, attempted_analyzer=NULL, score=NULL WHERE fingerprint=? AND superseded_by IS NULL
                     AND (news_summary!=? OR source!=? OR published_at!=?)""",
                     (item.summary,item.source,iso_utc(item.published_at),item.fingerprint,
                      item.summary,item.source,iso_utc(item.published_at)),
@@ -129,8 +217,8 @@ class NewsStore:
                     """
                     INSERT OR IGNORE INTO news_items (
                         fingerprint, market, symbol, title, news_summary, source,
-                        url, published_at, discovered_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        url, published_at, discovered_at, article_url
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item.fingerprint,
@@ -142,9 +230,17 @@ class NewsStore:
                         item.url,
                         iso_utc(item.published_at),
                         iso_utc(item.discovered_at),
+                        _article_url(item.url),
                     ),
                 )
                 inserted += cursor.rowcount
+                article_url = _article_url(item.url)
+                if cursor.rowcount and article_url:
+                    latest = connection.execute("""SELECT fingerprint FROM news_items WHERE market=? AND symbol=? AND article_url=?
+                        ORDER BY published_at DESC, discovered_at DESC, rowid DESC LIMIT 1""",
+                        (item.market, item.symbol, article_url)).fetchone()[0]
+                    connection.execute("""UPDATE news_items SET superseded_by=CASE WHEN fingerprint=? THEN NULL ELSE ? END
+                        WHERE market=? AND symbol=? AND article_url=?""", (latest, latest, item.market, item.symbol, article_url))
         return inserted
 
     def pending_items(
@@ -153,16 +249,23 @@ class NewsStore:
         *,
         analyzer: str | None = None,
         eligible: Callable[[NewsItem], bool] | None = None,
+        now: datetime | None = None,
     ) -> list[NewsItem]:
         items = []
         with self._session() as connection:
-            conditions = "analyzed_at IS NULL AND attempts < 3"
-            parameters = ()
+            conditions = "analyzed_at IS NULL"
+            parameters = []
             if analyzer:
-                conditions = f"({conditions}) OR (analyzed_at IS NOT NULL AND COALESCE(analyzer, '') != ? AND last_error IS NULL)"
-                parameters = (analyzer,)
+                conditions = f"({conditions} OR COALESCE(analyzer, '') != ?)"
+                parameters.append(analyzer)
+            conditions += " AND (retry_after IS NULL OR retry_after <= ?"
+            parameters.append(iso_utc(now or utc_now()))
+            if analyzer:
+                conditions += " OR COALESCE(attempted_analyzer, '') != ?"
+                parameters.append(analyzer)
+            conditions += ")"
             rows = connection.execute(
-                f"SELECT * FROM news_items WHERE {conditions} ORDER BY published_at DESC",
+                f"SELECT * FROM current_news_items WHERE {conditions} ORDER BY published_at DESC",
                 parameters,
             )
             # Apply scope before the batch limit so obsolete records cannot block current news.
@@ -184,20 +287,25 @@ class NewsStore:
 
     def save_analysis(self, item: NewsItem, analysis: Analysis, analyzed_at: datetime) -> None:
         with self._session() as connection:
+            metadata = dict(analysis.metadata)
+            old = connection.execute("SELECT analysis_metadata FROM news_items WHERE fingerprint=?", (item.fingerprint,)).fetchone()
+            legacy = _analysis_metadata(old["analysis_metadata"] if old else None).get("legacy_judgment")
+            if legacy:
+                metadata["legacy_judgment"] = legacy
             connection.execute(
                 """
                 UPDATE news_items SET
                     analyzed_at = ?, analyzer = ?, event_type = ?, direction = ?,
                     importance = ?, surprise = ?, relevance = ?, confidence = ?,
                     horizon = ?, analysis_summary = ?, risk_flags = ?, score = ?,
-                    attempts = attempts + 1, last_error = NULL, analysis_metadata = ?, event_key = ?
+                    attempts = 0, last_error = NULL, retry_after = NULL, attempted_analyzer = NULL, analysis_metadata = ?, event_key = ?
                 WHERE fingerprint = ?
                 """,
                 (
                     iso_utc(analyzed_at),
                     analysis.analyzer,
                     analysis.event_type,
-                    analysis.direction,
+                    analysis.direction if _direction_eligible(metadata) else 0.0,
                     analysis.importance,
                     analysis.surprise,
                     analysis.relevance,
@@ -205,33 +313,43 @@ class NewsStore:
                     analysis.horizon,
                     analysis.summary,
                     json.dumps(analysis.risk_flags, ensure_ascii=False),
-                    analysis.score,
-                    json.dumps(analysis.metadata, ensure_ascii=False),
+                    analysis.score if _direction_eligible(metadata) else 0.0,
+                    json.dumps(metadata, ensure_ascii=False),
                     news_event_key(item.market, item.symbol, item.title, item.summary, iso_utc(item.published_at)),
                     item.fingerprint,
                 ),
             )
+            if not _direction_eligible(metadata):
+                connection.execute("DELETE FROM alerts WHERE fingerprint=?", (item.fingerprint,))
 
-    def save_error(self, item: NewsItem, error: str) -> None:
+    def save_error(self, item: NewsItem, error: str, *, analyzer: str = "", now: datetime | None = None) -> None:
         with self._session() as connection:
+            row = connection.execute("SELECT attempts, attempted_analyzer FROM news_items WHERE fingerprint=?", (item.fingerprint,)).fetchone()
+            if row is None:
+                return
+            attempts = (row['attempts'] if row['attempted_analyzer'] == analyzer else 0) + 1
+            retry_after = iso_utc((now or utc_now()) + timedelta(seconds=min(3600, 30 * 2 ** min(attempts-1, 7))))
             connection.execute(
                 """
                 UPDATE news_items
-                SET attempts = attempts + 1, last_error = ?
+                SET attempts = ?, last_error = ?, retry_after = ?, attempted_analyzer = ?
                 WHERE fingerprint = ?
                 """,
-                (error[:1000], item.fingerprint),
+                (attempts, error[:1000], retry_after, analyzer, item.fingerprint),
             )
 
     def create_alert(self, alert: Alert) -> bool:
         with self._session() as connection:
+            current = connection.execute("SELECT analysis_metadata FROM current_news_items WHERE fingerprint=?", (alert.fingerprint,)).fetchone()
+            if current is None or not _direction_eligible(_analysis_metadata(current["analysis_metadata"])):
+                return False
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO alerts (
                     fingerprint, created_at, polarity, level, score
-                ) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (
-                    SELECT 1 FROM alerts a JOIN news_items old ON old.fingerprint=a.fingerprint
-                    JOIN news_items current ON current.fingerprint=?
+                ) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM current_news_items WHERE fingerprint=?) AND NOT EXISTS (
+                    SELECT 1 FROM alerts a JOIN current_news_items old ON old.fingerprint=a.fingerprint
+                    JOIN current_news_items current ON current.fingerprint=?
                     WHERE current.event_key IS NOT NULL AND current.event_key!='' AND old.event_key=current.event_key
                 )
                 """,
@@ -242,57 +360,29 @@ class NewsStore:
                     alert.level,
                     alert.score,
                     alert.fingerprint,
+                    alert.fingerprint,
                 ),
             )
             return cursor.rowcount == 1
 
     def reconcile_alert(self, fingerprint: str, threshold: float) -> None:
         with self._session() as connection:
-            row = connection.execute("SELECT score FROM news_items WHERE fingerprint = ?", (fingerprint,)).fetchone()
+            row = connection.execute("SELECT score, analysis_metadata FROM news_items WHERE fingerprint = ?", (fingerprint,)).fetchone()
             if row is None:
                 return
             score = float(row["score"] or 0)
-            if abs(score) < threshold:
+            if not _direction_eligible(_analysis_metadata(row["analysis_metadata"])) or score == 0 or abs(score) < threshold:
                 connection.execute("DELETE FROM alerts WHERE fingerprint = ?", (fingerprint,))
             else:
                 connection.execute("UPDATE alerts SET score = ?, polarity = ?, level = ? WHERE fingerprint = ?",
                                    (score, "bullish" if score > 0 else "bearish", "high" if abs(score) >= .65 else "medium", fingerprint))
 
-    def dashboard_stats(self, *, hours: int, threshold: float) -> dict[str, object]:
-        cutoff = iso_utc(utc_now() - timedelta(hours=hours))
+    def count_news(self) -> int:
         with self._session() as connection:
-            news = connection.execute(
-                """
-                SELECT
-                    COUNT(*) AS news_count,
-                    COALESCE(SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END), 0) AS bullish,
-                    COALESCE(SUM(CASE WHEN score <= -? THEN 1 ELSE 0 END), 0) AS bearish,
-                    COALESCE(SUM(CASE WHEN ABS(score) < ? THEN 1 ELSE 0 END), 0) AS neutral,
-                    MAX(analyzed_at) AS last_analyzed_at
-                FROM news_items
-                WHERE analyzed_at IS NOT NULL AND published_at >= ?
-                """,
-                (threshold, threshold, threshold, cutoff),
-            ).fetchone()
-            alert_count = connection.execute(
-                "SELECT COUNT(*) AS count FROM alerts WHERE created_at >= ?",
-                (cutoff,),
-            ).fetchone()["count"]
-            total_news = connection.execute(
-                "SELECT COUNT(*) AS count FROM news_items"
-            ).fetchone()["count"]
-        return {
-            "window_hours": hours,
-            "news_count": int(news["news_count"]),
-            "bullish": int(news["bullish"]),
-            "bearish": int(news["bearish"]),
-            "neutral": int(news["neutral"]),
-            "alert_count": int(alert_count),
-            "total_news": int(total_news),
-            "last_analyzed_at": news["last_analyzed_at"],
-        }
+            return int(connection.execute("SELECT COUNT(*) FROM news_items").fetchone()[0])
 
-    def recent_news(self, limit: int = 100, *, language: str = "all") -> list[dict[str, object]]:
+    def recent_news(self, limit: int = 100, *, language: str = "all", market: str | None = None,
+                    symbol: str | None = None) -> list[dict[str, object]]:
         with self._session() as connection:
             rows = connection.execute(
                 """
@@ -301,15 +391,17 @@ class NewsStore:
                     a.created_at AS alert_created_at,
                     a.polarity AS alert_polarity,
                     a.level AS alert_level
-                FROM news_items AS n
+                FROM current_news_items AS n
                 LEFT JOIN alerts AS a ON a.fingerprint = n.fingerprint
                 WHERE n.analyzed_at IS NOT NULL
                   AND n.source != 'demo' AND n.title NOT LIKE '[演示数据]%'
                   AND (? != 'zh' OR n.title GLOB '*[一-龥]*')
-                ORDER BY n.published_at DESC
+                  AND (? IS NULL OR n.market = ?)
+                  AND (? IS NULL OR n.symbol = ?)
+                ORDER BY n.published_at DESC, n.fingerprint ASC
                 LIMIT ?
                 """,
-                (language, max(1, min(limit, 10000))),
+                (language, market, market, symbol, symbol, max(1, min(limit, 10000))),
             ).fetchall()
         return [_serialize_news_row(row) for row in rows]
 
@@ -323,9 +415,13 @@ class NewsStore:
                     a.polarity AS alert_polarity,
                     a.level AS alert_level
                 FROM alerts AS a
-                JOIN news_items AS n ON n.fingerprint = a.fingerprint
-                WHERE n.source != 'demo' AND n.title NOT LIKE '[演示数据]%'
-                ORDER BY a.created_at DESC
+                JOIN current_news_items AS n ON n.fingerprint = a.fingerprint
+                WHERE n.analyzed_at IS NOT NULL AND n.source != 'demo' AND n.title NOT LIKE '[演示数据]%'
+                  AND CASE WHEN json_valid(n.analysis_metadata) THEN
+                      json_extract(n.analysis_metadata, '$.judgment_version') = 'evidence-v1'
+                      AND json_extract(n.analysis_metadata, '$.evidence_status') = 'supported'
+                      AND json_extract(n.analysis_metadata, '$.direction_eligible') = 1 ELSE 0 END
+                ORDER BY a.created_at DESC, a.fingerprint ASC
                 LIMIT ?
                 """,
                 (max(1, min(limit, 10000)),),
@@ -334,20 +430,20 @@ class NewsStore:
 
     def sentiment_by_symbol(self, *, hours: int, records: list[dict] | None = None) -> list[dict[str, object]]:
         now = utc_now()
-        cutoff = iso_utc(now - timedelta(hours=hours))
-        with self._session() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    market, symbol, title, news_summary, event_key, score, importance, confidence, published_at
-                FROM news_items
-                WHERE analyzed_at IS NOT NULL AND published_at >= ?
-                ORDER BY published_at DESC
-                """,
-                (cutoff,),
-            ).fetchall()
-        if records is not None:
-            rows = records
+        rows = records
+        if rows is None:
+            cutoff = iso_utc(now - timedelta(hours=hours))
+            with self._session() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        market, symbol, title, news_summary, event_key, score, importance, confidence, published_at, analysis_metadata
+                    FROM current_news_items
+                    WHERE analyzed_at IS NOT NULL AND published_at >= ?
+                    ORDER BY published_at DESC, fingerprint ASC
+                    """,
+                    (cutoff,),
+                ).fetchall()
         grouped: dict[tuple[str, str], dict[str, object]] = {}
         seen_events: set[str] = set()
         for row in rows:
@@ -374,6 +470,8 @@ class NewsStore:
                 },
             )
             group["news_count"] = int(group["news_count"]) + 1
+            if not _direction_eligible(_analysis_metadata(record.get("analysis_metadata"))):
+                continue
             score = float(row["score"] or 0.0)
             if abs(score) <= 0.04:
                 continue
@@ -426,8 +524,8 @@ class NewsStore:
                         currency, price, change_pct, volume, relative_volume,
                         market_cap, movement_type, intensity_score, reason_category,
                         reason_summary, confidence, evidence_title, evidence_url,
-                        evidence_source, evidence_published_at, analyzer
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        evidence_source, evidence_published_at, analyzer, reason_details
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item.scan_id,
@@ -453,6 +551,7 @@ class NewsStore:
                         item.evidence_source,
                         iso_utc(item.evidence_published_at) if item.evidence_published_at else None,
                         item.analyzer,
+                        json.dumps(item.reason_details, ensure_ascii=False),
                     ),
                 )
                 saved += cursor.rowcount
@@ -488,8 +587,14 @@ def _serialize_news_row(row: sqlite3.Row) -> dict[str, object]:
             risk_flags = [str(value) for value in json.loads(row["risk_flags"])]
         except (TypeError, json.JSONDecodeError):
             risk_flags = [str(row["risk_flags"])]
-    score = float(row["score"] or 0.0)
-    metadata = json.loads(row["analysis_metadata"] or "{}")
+    metadata = _analysis_metadata(row["analysis_metadata"])
+    if metadata.get("judgment_version") != "evidence-v1":
+        metadata = {**metadata, "evidence_status": "legacy", "direction_eligible": False}
+    eligible = _direction_eligible(metadata)
+    score = float(row["score"] or 0.0) if eligible else 0.0
+    status = metadata.get("evidence_status", "legacy")
+    judgment_label = ("多空交织" if status == "mixed" else "中性" if status == "neutral" else
+                      "待核实" if not eligible else "利多" if score > .04 else "利空" if score < -.04 else "中性")
     impact = explain_news_impact(
         str(row["event_type"] or "other"),
         score,
@@ -510,28 +615,41 @@ def _serialize_news_row(row: sqlite3.Row) -> dict[str, object]:
         "analysis_metadata": metadata,
         "event_key": row["event_key"] or news_event_key(row["market"], row["symbol"], row["title"], row["news_summary"], row["published_at"]),
         "evidence_status": metadata.get("evidence_status", "legacy"),
+        "judgment_label": judgment_label,
+        "direction_eligible": eligible,
         "event_type": row["event_type"] or "other",
-        "direction": round(float(row["direction"] or 0.0), 4),
+        "direction": round(float(row["direction"] or 0.0), 4) if eligible else 0.0,
         "importance": round(float(row["importance"] or 0.0), 4),
         "surprise": round(float(row["surprise"] or 0.0), 4),
         "relevance": round(float(row["relevance"] or 0.0), 4),
         "confidence": round(float(row["confidence"] or 0.0), 4),
         "horizon": row["horizon"] or "1-5d",
-        "analysis_summary": row["analysis_summary"] or "",
-        "risk_flags": risk_flags,
+        "analysis_summary": "旧版判断待重新核实，暂不计入利多利空信号。" if status == "legacy" else row["analysis_summary"] or "",
+        "risk_flags": [] if status == "legacy" else risk_flags,
         "score": round(score, 4),
         "polarity": "bullish" if score > 0.04 else "bearish" if score < -0.04 else "neutral",
         "impact_label": impact["label"],
         "impact_area": impact["area"],
         "impact_reason": impact["reason"],
-        "alert_created_at": row["alert_created_at"],
-        "alert_polarity": row["alert_polarity"],
-        "alert_level": row["alert_level"],
+        "alert_created_at": row["alert_created_at"] if eligible else None,
+        "alert_polarity": row["alert_polarity"] if eligible else None,
+        "alert_level": row["alert_level"] if eligible else None,
     }
 
 
 def _serialize_movement_row(row: sqlite3.Row) -> dict[str, object]:
     change_pct = float(row["change_pct"] or 0.0)
+    try:
+        details = json.loads(row["reason_details"] or "{}")
+    except (ValueError, TypeError):
+        details = {}
+    if not isinstance(details, dict) or details.get("version") != REASON_VERSION:
+        facts = details.get("facts", []) if isinstance(details, dict) else []
+        summary = "。".join(fact["text"] for fact in facts if isinstance(fact, dict)
+                           and isinstance(fact.get("text"), str) and fact["text"] != row["evidence_title"])
+        details = legacy_movement_reason(row["market"], row["symbol"], row["name"], row["evidence_title"],
+            row["evidence_url"], row["evidence_source"], row["evidence_published_at"], row["detected_at"], change_pct, summary)
+    linked = details.get("status") == "linked"
     return {
         "scan_id": row["scan_id"],
         "detected_at": row["detected_at"],
@@ -549,9 +667,10 @@ def _serialize_movement_row(row: sqlite3.Row) -> dict[str, object]:
         "market_cap": round(float(row["market_cap"] or 0.0), 2),
         "movement_type": row["movement_type"],
         "intensity_score": round(float(row["intensity_score"] or 0.0), 2),
-        "reason_category": row["reason_category"],
-        "reason_summary": row["reason_summary"],
-        "confidence": round(float(row["confidence"] or 0.0), 2),
+        "reason_category": details.get("category", "other") if linked else "unconfirmed",
+        "reason_summary": "".join(details.get(key, "") for key in ("fact_summary", "summary", "relation_text")) if linked else "原因未核实",
+        "reason_details": details,
+        "confidence": min(.55, round(float(row["confidence"] or 0.0), 2)) if linked else 0,
         "evidence_title": row["evidence_title"],
         "evidence_url": row["evidence_url"],
         "evidence_source": row["evidence_source"],

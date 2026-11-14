@@ -8,6 +8,7 @@ import io
 import json
 import math
 import re
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -21,6 +22,15 @@ from .research_ledger import ResearchLedger
 SYMBOLS = ("IGV", "XSW", "WCLD", "BUG")
 IDENTITY = "IGV-XSW-WCLD-BUG"
 MAX_FILE_BYTES = 1_000_000
+_SAVE_LOCK = threading.RLock()
+
+
+def etf_symbol(value):
+    value = str(value or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,14}", value):
+        raise ValueError("ETF 代码格式无效")
+    return value
+
 HEADERS = {
     "name": {"name", "company", "companyname", "holdingname", "securityname", "公司", "公司名称", "公司名稱", "公司名", "证券名称", "證券名稱", "持仓名称", "持倉名稱"},
     "symbol": {"ticker", "symbol", "code", "代码", "代碼", "股票代码", "股票代碼", "证券代码", "證券代碼"},
@@ -111,7 +121,7 @@ def parse_weight(value, number_format=""):
     return number
 
 
-def parse_table(rows):
+def table_header(rows):
     columns, start = {}, None
     for index, row in enumerate(rows[:50]):
         found = {}
@@ -123,6 +133,11 @@ def parse_table(rows):
         if all(key in found for key in ("name", "symbol", "weight")):
             columns, start = found, index + 1
             break
+    return columns, start
+
+
+def parse_table(rows):
+    columns, start = table_header(rows)
     if start is None:
         raise ValueError("找不到公司、代码、权重三列，请保留原始表头")
     holdings = []
@@ -158,6 +173,7 @@ def parse_table(rows):
 
 
 def parse_import(data, filename, *, symbol="", as_of=""):
+    symbol = etf_symbol(symbol) if symbol else ""
     if not data or len(data) > MAX_FILE_BYTES:
         raise ValueError("请选择不超过 1 MB 的 Excel 或 CSV")
     suffix = Path(filename).suffix.lower()
@@ -178,12 +194,16 @@ def parse_import(data, filename, *, symbol="", as_of=""):
                         if index >= 2500 or len(row) > 40:
                             raise ValueError("Excel 的行数或列数过多")
                         rows.append([(cell.value, cell.number_format) for cell in row])
-                    matched = [key for key in SYMBOLS if re.search(rf"\b{key}\b", sheet.title.upper())]
+                    matched = [key for key in (*SYMBOLS, *([symbol] if symbol and symbol not in SYMBOLS else [])) if re.search(rf"\b{re.escape(key)}\b", sheet.title.upper())]
+                    if not matched and re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,14}", sheet.title) and table_header(rows)[1] is not None:
+                        matched = [sheet.title]
                     if not matched:
                         for row in rows[:20]:
                             if row and text(row[0][0]).strip(": ").lower() in {"ticker symbol", "fund ticker", "etf代码", "etf代碼"}:
-                                matched = [key for key in SYMBOLS if key in [text(cell[0]).upper() for cell in row[1:]]]
+                                matched = [etf_symbol(row[1][0])] if len(row) > 1 and text(row[1][0]) else []
                                 break
+                    if not matched and symbol and len(workbook.worksheets) == 1:
+                        matched = [symbol]
                     if len(matched) == 1:
                         if matched[0] in tables:
                             raise ValueError(f"{matched[0]} 有多个持仓工作表，无法确定版本")
@@ -202,7 +222,7 @@ def parse_import(data, filename, *, symbol="", as_of=""):
         except (BadZipFile, KeyError, OSError, ParseError, DefusedXmlException) as error:
             raise ValueError("无法读取 Excel 文件") from error
     elif suffix == ".csv":
-        if symbol not in SYMBOLS:
+        if not symbol:
             raise ValueError("请选择 CSV 对应的 ETF")
         try:
             rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig"))))
@@ -212,7 +232,7 @@ def parse_import(data, filename, *, symbol="", as_of=""):
     else:
         raise ValueError("仅支持 .xlsx 与 .csv")
     if not tables:
-        raise ValueError("工作表名须包含 IGV、XSW、WCLD 或 BUG")
+        raise ValueError("工作表请使用 ETF 代码命名，或为单表文件指定 ETF 代码")
     if as_of and not parse_date(as_of):
         raise ValueError("持仓日期无效")
     funds = {}
@@ -246,11 +266,21 @@ def parse_import(data, filename, *, symbol="", as_of=""):
 
 
 def save_holdings(ledger, funds):
+    with _SAVE_LOCK:
+        return _save_holdings(ledger, funds)
+
+
+def latest_holdings(ledger):
     with ledger.session() as db:
         latest = db.execute("SELECT * FROM input_versions WHERE kind='etf_holdings' AND identity=? ORDER BY id DESC LIMIT 1", (IDENTITY,)).fetchone()
-    previous = json.loads(latest["payload"]) if latest else {"funds": {}}
+    return {**dict(latest), "payload": json.loads(latest["payload"])} if latest else {"payload": {"funds": {}}}
+
+
+def _save_holdings(ledger, funds):
+    latest = latest_holdings(ledger)
+    previous = latest["payload"]
     merged = {**previous["funds"], **funds}
-    saved = ledger.observe("etf_holdings", IDENTITY, {"funds": merged}, expected_version=latest["version"] if latest else 0)
+    saved = ledger.observe("etf_holdings", IDENTITY, {"funds": merged}, expected_version=latest.get("version", 0))
     return {"imported": list(funds), "version": saved["version"], "input_id": saved["id"]}
 
 

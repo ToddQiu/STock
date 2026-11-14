@@ -12,7 +12,8 @@ const PORTFOLIO_CHART_CONFIG = {
   daily: { label: "日 K", defaultPeriod: "3m", periods: { "1m": "1 月", "3m": "3 月", "6m": "6 月", "1y": "1 年" } },
   weekly: { label: "周 K", defaultPeriod: "1y", periods: { "6m": "6 月", "1y": "1 年" } },
 };
-const PORTFOLIO_CHART_INTERVAL_LABELS = { "1m": "1 分钟", "5m": "5 分钟", "1d": "日线", "1wk": "周线", trading_day: "日净值" };
+const PORTFOLIO_CHART_INTERVAL_LABELS = { "1m": "1 分钟", "5m": "5 分钟", "10m": "10 分钟", "15m": "15 分钟", "30m": "30 分钟", "60m": "60 分钟", "1d": "日线", "1wk": "周线", trading_day: "日净值" };
+const PORTFOLIO_INTRADAY_INTERVALS = ["1m", "5m", "10m", "15m", "30m", "60m"];
 const PORTFOLIO_OVERLAY_COLORS = { ma5: "#8b5b0b", ma20: "#27738d", vwap: "#7c5ca8" };
 
 // Identity is market + code, never an editable display name (e.g. PALU named PANW).
@@ -48,6 +49,12 @@ const instrumentBriefs = new Map([
   ["KR:005930.KS", "主营：存储芯片、芯片代工，以及手机、电视与家电等电子产品。", "https://www.samsung.com/global/ir/ir-resources/our-business/"],
   ["KR:000660.KS", "主营：DRAM、HBM 与 NAND 闪存等存储芯片。", "https://research-user.skhynix.com/research-areas/future-memory-technologies/evolutionary-memory"],
   ["CN:601168.SS", "主营：铜、铅、锌等金属的采选、冶炼与相关资源开发。", "https://www.westmining.com/tzzgx/yjgg/202508/P020250826572372549202.pdf"],
+  ["CN:515000.SS", "侧重：科技龙头企业。", "https://www.fsfund.com/fund/515000/fundDetail.shtml", "2026-10-29"],
+  ["CN:512480.SS", "侧重：半导体产品与设备。", "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2026-03-24/512480_20260324_KW7A.pdf", "2026-10-29"],
+  ["CN:515230.SS", "侧重：软件行业。", "https://e.gtfund.com/etrade/Jijin/view/id/515230", "2026-10-29"],
+  ["CN:512890.SS", "策略：红利与低波动。", "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2026-03-17/515790_20260317_9RH6.pdf", "2026-10-29"],
+  ["CN:513310.SS", "侧重：中国与韩国半导体。", "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2026-03-17/515790_20260317_9RH6.pdf", "2026-10-29"],
+  ["CN:513010.SS", "侧重：港股科技（恒生科技指数）。", "https://cdn.efunds.com.cn/owch/data/bulletin/20260212/易方达恒生科技交易型开放式指数证券投资基金（QDII）基金产品资料概要更新.pdf?from=person", "2026-10-29"],
   ["FUND:016452", "产品：跟踪纳斯达克 100 指数的 QDII 指数基金。", "https://www.nffund.com/main/nffund/personal-financing/detail.shtml?fundCode=016452"],
   ["FUND:040046", "产品：通过目标 ETF 跟踪纳斯达克 100 指数的 QDII 联接基金。", "https://www.huaan.com.cn/funds/040046/index.shtml"],
   ["FUND:014978", "产品：通过目标 ETF 跟踪纳斯达克 100 指数的 QDII 联接基金（C 类）。", "https://www.huaan.com.cn/upload2010/2023/07/21/021707353_0_40b8433e-64fd-3886-8a04-49eeb95cf44b.pdf"],
@@ -65,9 +72,20 @@ const instrumentBriefs = new Map([
   ["ASSET:BTC", "资产：比特币，去中心化数字资产；不是公司股票。", "https://bitcoin.org/zh_CN/"],
   ["ASSET:OIL", "资产：WTI 原油期货，反映特定合约价格；不是原油公司股票。", "https://www.cmegroup.com/markets/energy/crude-oil/light-sweet-crude.html"],
   ["ASSET:US5Y", "资产：美国五年期国债收益率；收益率上升不等于债券价格上涨。", "https://home.treasury.gov/resource-center-data-chart-center/interest-rates"],
-].map(([key, text, source]) => [key, { text, source, reviewedAt: source ? "2026-10-06" : "", basis: source ? "官网业务 / 产品资料" : "当前产品名称分类，投资范围须核对基金合同" }]));
+].map(([key, text, source, reviewedAt = "2026-10-06"]) => [key, { text, source, reviewedAt: source ? reviewedAt : "", basis: source ? "官网业务 / 产品资料" : "当前产品名称分类，投资范围须核对基金合同" }]));
 
 let companyBriefSignature = "";
+const instrumentNames = new Map(Object.entries({
+  "US:AAPL":"Apple Inc.", "US:MU":"Micron Technology, Inc.", "US:MP":"MP Materials", "US:HOOD":"Robinhood Markets",
+  "US:CEG":"Constellation Energy", "US:BRK-B":"Berkshire Hathaway Class B", "US:MS":"Morgan Stanley",
+  "US:GOOG":"Alphabet Class C", "US:GOOGL":"Alphabet Class A",
+  "US:PALU":"PANW Daily 2x Long ETF", "US:CONL":"Coinbase Daily 2x Long ETF",
+  "US:AVGX":"Defiance Daily Target 2X Long AVGO ETF", "US:GDXU":"MicroSectors Gold Miners 3X Leveraged ETN",
+  "US:SCO":"ProShares UltraShort Bloomberg Crude Oil", "US:BUG":"Global X Cybersecurity ETF",
+  "US:SOXX":"iShares Semiconductor ETF", "US:SOXL":"Semiconductor Daily 3x Long ETF",
+  "US:RSP":"S&P 500 Equal Weight ETF", "US:MAGS":"Magnificent Seven ETF", "US:DRNZ":"REX Drone ETF",
+  "KR:005930.KS":"三星电子", "KR:000660.KS":"SK 海力士",
+}));
 const instrumentEarningsState = {data:null, items:new Map(), signature:"", pending:false, readError:null};
 const earningsDayFormatter = new Intl.DateTimeFormat("en-US", {timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"});
 
@@ -170,11 +188,28 @@ function instrumentBriefKey(item = {}) {
   if (market === "US" && /^BRK[.-][AB]$/.test(symbol)) symbol = symbol.replace(".", "-");
   if (market === "CN") {
     symbol = symbol.replace(/\.SH$/, ".SS");
-    if (/^\d{6}$/.test(symbol)) symbol += symbol.startsWith("6") ? ".SS" : symbol.startsWith("0") || symbol.startsWith("3") ? ".SZ" : ".BJ";
+    if (/^\d{6}$/.test(symbol)) symbol += /^[569]/.test(symbol) ? ".SS" : /^[48]/.test(symbol) ? ".BJ" : ".SZ";
   }
   if (market === "KR" && /^\d{6}$/.test(symbol)) symbol += ".KS";
   if (market === "HK" && /^\d{1,5}(?:\.HK)?$/.test(symbol)) symbol = `${String(Number(symbol.replace(/\.HK$/, ""))).padStart(4, "0")}.HK`;
   return market && symbol ? `${market}:${symbol}` : "";
+}
+
+function instrumentName(item = {}, dashboard = state.dashboard) {
+  if (typeof item === "string") item = {target:item};
+  const key = instrumentBriefKey(item);
+  if (instrumentNames.has(key)) return instrumentNames.get(key);
+  const related = key ? [...(dashboard?.watchlist || []), ...(dashboard?.stock_whitelist || []), ...(dashboard?.portfolio?.positions || []),
+    ...(dashboard?.portfolio?.pending_positions || []), ...(dashboard?.portfolios || []).flatMap(book => book.positions || [])]
+    .filter(row => instrumentBriefKey(row) === key) : [];
+  const names = [item.name, item.quote?.name, ...related.map(row => row.name)].filter(name => typeof name === "string")
+    .map(name => name.trim()).filter(name => name && name.toUpperCase() !== String(item.symbol || "").toUpperCase() && name.toUpperCase() !== key);
+  if (key.startsWith("US:")) return names.find(name => /[A-Za-z]/.test(name) && !/[\u3400-\u9fff]/.test(name)) || key.slice(3);
+  return names.find(name => /[\u3400-\u9fff]/.test(name) || /^(CN|HK|FUND):/.test(key) && /^\d+ETF$/i.test(name)) || names[0] || "名称待确认";
+}
+
+function instrumentLabel(item) {
+  return `${instrumentName(item)}（${item.symbol || item.code || instrumentBriefKey(item).split(":")[1] || "--"}）`;
 }
 
 function instrumentBrief(item) {
@@ -187,7 +222,7 @@ function instrumentBrief(item) {
 
 function updateInstrumentBrief(node, item) {
   const brief = instrumentBrief(item);
-  node.textContent = brief.text;
+  node.textContent = node.hideUnknownBrief && !instrumentBriefs.has(instrumentBriefKey(item)) ? "" : brief.text;
   node.earningsNote = null;
   node.setAttribute("data-instrument-brief", instrumentBriefKey(item));
   node.hidden = !instrumentBriefKey(item);
@@ -195,8 +230,9 @@ function updateInstrumentBrief(node, item) {
   updateInstrumentEarnings(node, item);
 }
 
-function instrumentBriefNode(item) {
+function instrumentBriefNode(item, hideUnknown = false) {
   const node = el("small", "instrument-brief");
+  node.hideUnknownBrief = hideUnknown;
   updateInstrumentBrief(node, item);
   return node;
 }
@@ -264,6 +300,7 @@ const state = {
   portfolioSearch: "",
   portfolioChartItem: null,
   portfolioChartMode: "daily",
+  portfolioChartCandleInterval: "1m",
   portfolioChartPeriod: "3m",
   portfolioChartData: null,
   portfolioChartLoadedKey: null,
@@ -335,13 +372,22 @@ const assetEventLabels = {
 
 const marketLabels = { CN: "A股", HK: "港股", KR: "韩国", US: "美股", FUND: "中国基金" };
 const pendingGetRequests = new Map();
+const portfolioContext = {id: "default", detail: false, writes: 0, switching: false};
+try { portfolioContext.id = localStorage.getItem("stock.portfolio.selected") || "default"; } catch {}
+function portfolioRequestPath(path) {
+  if (portfolioContext.id === "default" || !/^\/api\/(?:(?:dashboard|runtime)(?:\?|$)|portfolio\/(?!chart)|investment(?:\/|\?|$))/.test(path)) return path;
+  return path + (path.includes("?") ? "&" : "?") + "portfolio_id=" + encodeURIComponent(portfolioContext.id);
+}
 let apiReadGeneration = 0;
 
 async function api(path, options = {}) {
+  const memoryPath = path;
+  path = portfolioRequestPath(path);
   const isRead = String(options.method || "GET").toUpperCase() === "GET";
   if (!isRead && typeof startupMemory !== "undefined" && !startupMemory.ready) throw new Error("正在确认当前配置，请等待总览同步后再修改");
   if (isRead && pendingGetRequests.has(path)) return pendingGetRequests.get(path);
   const generation = apiReadGeneration;
+  if (!isRead) portfolioContext.writes += 1;
   const operation = (async () => {
     const request = { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } };
     if (request.body && typeof request.body !== "string") request.body = JSON.stringify(request.body);
@@ -367,12 +413,13 @@ async function api(path, options = {}) {
         pendingGetRequests.clear();
         if (typeof invalidateStartupMemory === "function") invalidateStartupMemory();
       }
-      if (isRead && typeof rememberStartupResponse === "function") rememberStartupResponse(path, payload);
+      if (isRead && typeof rememberStartupResponse === "function") rememberStartupResponse(memoryPath.split("?")[0] === "/api/dashboard" ? "/api/dashboard" : path, payload);
       return payload;
     } catch (error) {
       if (error.name === "AbortError") throw new Error("读取数据超时，稍后将重新尝试");
       throw error;
     } finally {
+      if (!isRead) portfolioContext.writes -= 1;
       if (timer !== null) window.clearTimeout(timer);
     }
   })();
@@ -435,14 +482,17 @@ function formatPrice(value) {
 }
 
 function formatAssetPrice(item) {
-  const number = Number(item.price || 0);
+  if (item.price == null || typeof item.price === "boolean" || String(item.price).trim() === "") return "--";
+  const number = Number(item.price);
+  if (!Number.isFinite(number)) return "--";
   const digits = item.key === "US5Y" ? 3 : 2;
   return number.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 function signedPercent(value, digits = 2) {
-  if (value === null || value === undefined) return "--";
-  const number = Number(value || 0);
+  if (value == null || typeof value === "boolean" || String(value).trim() === "") return "--";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
   return `${number >= 0 ? "+" : ""}${number.toFixed(digits)}%`;
 }
 
@@ -461,18 +511,6 @@ function normalizeStockSymbol(value) {
     .replace(/\.KS$/i, "")
     .replace(/\.KQ$/i, "")
     .trim();
-}
-
-function koreaStockDefinitionBySymbol(symbol) {
-  const normalized = normalizeStockSymbol(symbol);
-  return KOREA_STOCK_DEFINITIONS.find((item) => normalizeStockSymbol(item.symbol) === normalized);
-}
-
-function confidenceLabel(value) {
-  const confidence = Number(value || 0);
-  if (confidence >= 0.7) return "高置信";
-  if (confidence >= 0.45) return "中置信";
-  return "低置信";
 }
 
 function confidenceClass(value) {
@@ -501,7 +539,7 @@ function emptyState(title, copy = "等待新的数据进入监测器") {
 }
 
 function marketBadge(item) {
-  return el("span", "market-badge", `${marketLabels[item.market] || item.market} · ${item.symbol}`);
+  return el("span", "market-badge instrument-badge", `${instrumentLabel(item)} · ${marketLabels[item.market] || item.market}`);
 }
 
 function newsTitle(item) {
@@ -542,6 +580,57 @@ function renderNewsDetailText(item) {
   summary.textContent = item[field] ? `原文摘要：${item[field]}` : "";
   summary.hidden = !item[field];
   if (item[field]) appendNewsTranslation(summary, item, field);
+  const judgment = newsJudgment(item), score = document.getElementById("detail-score");
+  score.textContent = judgment.eligible ? `${judgment.label} ${formatScore(item.score)}` : judgment.label;
+  score.className = judgment.tone;
+  document.getElementById("detail-horizon").textContent = judgment.eligible ? item.horizon || "--" : "待确认";
+  const analysis = document.getElementById("detail-analysis");
+  analysis.replaceChildren(el("span", "", newsDetailSummary(item)));
+  for (const [label, text] of newsEvidenceDetails(item)) {
+    analysis.append(el("span", "news-translation", `${label}：${text}`));
+  }
+}
+
+function newsJudgment(item) {
+  const metadata = item.analysis_metadata || {}, status = item.evidence_status || metadata.evidence_status;
+  const eligible = status === "supported" && metadata.direction_eligible !== false && Number.isFinite(item.score);
+  const label = status === "price_only" ? "行情事实" : status === "mixed" ? "多空并存"
+    : status === "neutral" ? "中性" : eligible ? scoreLabel(item.score) : "待核实";
+  const polarity = eligible ? item.score > 0.04 ? "bullish" : item.score < -0.04 ? "bearish" : "neutral" : status === "neutral" ? "neutral" : "pending";
+  return {status, eligible, label, polarity, tone:eligible ? scoreClass(item.score) : "neutral"};
+}
+
+function newsDetailSummary(item) {
+  const metadata = item.analysis_metadata || {};
+  return metadata.judgment_version === "evidence-v1" && item.analysis_summary
+    ? item.analysis_summary : newsAnalysisPreview(item) || "证据不足，暂不判断方向。";
+}
+
+function newsEvidenceDetails(item) {
+  const metadata = item.analysis_metadata || {};
+  if (metadata.judgment_version !== "evidence-v1") return [];
+  const details = [];
+  for (const fact of metadata.facts || []) {
+    if (typeof fact.quote === "string" && fact.quote.trim())
+      details.push([fact.field === "title" ? "标题摘录" : "来源摘录", fact.quote]);
+  }
+  for (const [key, label] of [["positive_case", "有利因素"], ["negative_case", "不利因素"],
+    ["transmission", "影响传导"], ["missing_information", "待核实信息"]]) {
+    const value = metadata[key];
+    const text = Array.isArray(value) ? value.filter(row => typeof row === "string").join("；") : typeof value === "string" ? value.trim() : "";
+    if (text) details.push([label, text]);
+  }
+  return details;
+}
+
+function newsAnalysisPreview(item) {
+  const status = item.evidence_status || item.analysis_metadata?.evidence_status;
+  if (!status || status === "insufficient" || item.analysis_metadata?.direction_eligible === false && status === "supported") return "证据不足，暂不判断方向。";
+  if (status === "mixed") return "正反证据并存，净影响待确认。";
+  if (status === "legacy") return "旧规则记录，方向待复核。";
+  if (status === "price_only") return "仅描述已发生的行情变化，暂不判断未来利多利空。";
+  if (status === "neutral") return item.analysis_summary || "已评估现有材料，暂无明确方向影响。";
+  return item.impact_reason || item.analysis_summary || "";
 }
 
 function renderNews(container, items, { expanded = false, limit = null, emptyTitle = null, emptyCopy = undefined } = {}) {
@@ -566,7 +655,7 @@ function renderNews(container, items, { expanded = false, limit = null, emptyTit
     const row = el("article", "news-row");
     row.tabIndex = 0;
     row.setAttribute("role", "button");
-    row.setAttribute("aria-label", `查看 ${item.symbol} 新闻详情`);
+    row.setAttribute("aria-label", `查看 ${instrumentLabel(item)} 新闻详情`);
     row.setAttribute("data-news-key", newsDisplayKey(item));
 
     const main = el("div", "news-main");
@@ -583,35 +672,34 @@ function renderNews(container, items, { expanded = false, limit = null, emptyTit
       badge.title = item.trump_factor.reason || "Trump 动态因子";
       top.append(badge);
     }
-    if (item.evidence_status === "insufficient") top.append(el("small", "news-source", "方向证据不足"));
-    if (item.evidence_status === "mixed") top.append(el("small", "news-source", "正反证据并存"));
-    if (item.evidence_status === "legacy") top.append(el("small", "news-source", "旧规则记录"));
+    const judgment = newsJudgment(item);
+    if (!judgment.eligible) top.append(el("small", "news-source", judgment.label));
     const headline = el("h3", "news-title", newsTitle(item));
     appendNewsTranslation(headline, item);
     headline.title = item.title || "";
     main.append(top, instrumentBriefNode(item), headline);
     if (item.impact_reason) {
-      const impact = el("div", `news-impact-explainer ${scoreClass(item.score)}`);
-      impact.title = item.analysis_summary || item.impact_reason;
+      const impact = el("div", `news-impact-explainer ${judgment.tone}`);
+      impact.title = newsDetailSummary(item);
       impact.append(
-        el("span", "news-impact-label", item.impact_label || "影响判断"),
-        el("strong", "news-impact-area", item.impact_area || "待确认"),
-        el("p", "news-impact-reason", item.impact_reason),
+        el("span", "news-impact-label", judgment.eligible ? item.impact_label || "影响判断" : judgment.label),
+        el("strong", "news-impact-area", judgment.eligible ? item.impact_area || "待确认" : ""),
+        el("p", "news-impact-reason", newsAnalysisPreview(item)),
       );
       main.append(impact);
     } else if (item.analysis_summary) {
-      main.append(el("p", "news-analysis", item.analysis_summary));
+      main.append(el("p", "news-analysis", newsAnalysisPreview(item)));
     }
 
     const event = el("div", "news-event");
     event.append(el("strong", "", eventLabels[item.event_type] || "其他"), el("span", "", item.horizon || "--"));
 
     const score = el("div", "score-cell");
-    const cls = scoreClass(item.score);
-    score.append(el("strong", `score-value ${cls}`, formatScore(item.score)));
+    const cls = judgment.tone;
+    score.append(el("strong", `score-value ${cls}`, judgment.eligible ? formatScore(item.score) : "--"));
     const track = el("div", "score-track");
     const fill = el("span", cls);
-    fill.style.width = `${Math.max(3, Math.min(100, Math.abs(Number(item.score || 0)) * 100))}%`;
+    fill.style.width = `${judgment.eligible ? Math.max(3, Math.min(100, Math.abs(Number(item.score || 0)) * 100)) : 0}%`;
     track.append(fill);
     score.append(track);
 
@@ -643,19 +731,33 @@ function renderAlerts(container, alerts, { table = false, limit = null } = {}) {
   }
   const fragment = document.createDocumentFragment();
   visible.forEach((item) => {
+    if (item.is_portfolio_risk) {
+      const row = el("article", table ? "alert-table-row" : "alert-item");
+      const copy = el("div");
+      const button = el("button", "event-title", item.title);
+      button.type = "button";
+      button.addEventListener("click", () => openPortfolioAlert(item));
+      copy.append(button, el("p", "", item.reason_summary));
+      row.append(el("span", "polarity-badge negative", "警戒线"), copy,
+        el("span", "event-badge", portfolioRiskNames[item.kind] || "持仓"),
+        el("time", "news-time", formatDate(item.created_at, true)));
+      fragment.append(row);
+      return;
+    }
+    const judgment = newsJudgment(item);
     if (table) {
       const row = el("article", "alert-table-row");
       const signal = el("div");
-      signal.append(el("span", `polarity-badge ${item.polarity}`, scoreLabel(item.score)), el("strong", "alert-score", formatScore(item.score)));
+      signal.append(el("span", `polarity-badge ${judgment.polarity}`, judgment.label), el("strong", "alert-score", judgment.eligible ? formatScore(item.score) : "--"));
       const copy = el("div");
-      copy.append(appendNewsTranslation(el("h3", "", `${item.market}:${item.symbol} · ${newsTitle(item)}`), item), instrumentBriefNode(item), el("p", "", item.analysis_summary || ""));
+      copy.append(appendNewsTranslation(el("h3", "", `${instrumentLabel(item)} · ${newsTitle(item)}`), item), instrumentBriefNode(item), el("p", "", newsDetailSummary(item)));
       row.append(signal, copy, el("span", "event-badge", eventLabels[item.event_type] || "其他"), el("time", "news-time", formatDate(item.alert_created_at, true)));
       row.addEventListener("click", () => openDetail(item));
       fragment.append(row);
     } else {
       const card = el("article", "alert-item");
       const top = el("div", "alert-item-top");
-      top.append(el("span", `polarity-badge ${item.polarity}`, `${scoreLabel(item.score)} · ${item.symbol}`), el("span", "alert-score", formatScore(item.score)));
+      top.append(el("span", `polarity-badge ${judgment.polarity}`, `${judgment.label} · ${instrumentLabel(item)}`), el("span", "alert-score", judgment.eligible ? formatScore(item.score) : "--"));
       card.append(top, instrumentBriefNode(item), appendNewsTranslation(el("h3", "", newsTitle(item)), item), el("small", "", `${eventLabels[item.event_type] || "其他"} · ${item.horizon || "--"}`));
       card.addEventListener("click", () => openDetail(item));
       fragment.append(card);
@@ -719,9 +821,11 @@ function renderPulse(data) {
     const score = Number(item.average_score || 0);
     const row = el("div", "sentiment-row");
     const identity = el("div", "sentiment-identity");
+    const name = el("strong", "sentiment-name", instrumentName(watch, data));
+    name.title = name.textContent;
     identity.append(
-      el("strong", "sentiment-symbol", watch.symbol),
-      el("small", "", `${Number(item.directional_count || 0)}/${Number(item.news_count || 0)} 条有方向`),
+      name, el("small", "sentiment-symbol", watch.symbol),
+      el("small", "sentiment-coverage", `${Number(item.directional_count || 0)}/${Number(item.news_count || 0)} 条有方向`),
     );
     row.append(identity);
     const track = el("div", "sentiment-track");
@@ -738,29 +842,7 @@ function renderPulse(data) {
 }
 
 function renderWatchlist(data) {
-  const container = document.getElementById("watchlist-table");
-  container.replaceChildren();
-  (data.watchlist || []).forEach((item) => {
-    const row = el("div", "watch-row");
-    const code = el("div", "watch-code");
-    code.append(el("span", "market-badge", marketLabels[item.market] || item.market), el("span", "", item.symbol));
-    const premium = renderAdrPremium(item.adr_premium);
-    const factor = item.trump_factor || {};
-    const trump = el("div", "watch-trump");
-    trump.append(
-      el("strong", scoreClass(factor.score), formatScore(factor.score)),
-      el("span", "", factor.theme_labels?.join("、") || "暂无相关动态"),
-    );
-    trump.title = factor.reason || "暂无相关动态";
-    const remove = el("button", "icon-button danger-button", "×");
-    remove.type = "button";
-    remove.title = `移除 ${item.symbol}`;
-    remove.addEventListener("click", () => removeWatchItem(item));
-    const name = el("div", "watch-name");
-    name.append(el("strong", "", item.name), instrumentBriefNode(item));
-    row.append(code, name, premium, trump, el("div", "watch-query", item.query), remove);
-    container.append(row);
-  });
+  window.StockWatchlist?.render(data);
 }
 
 function formatPortfolioMoney(value, currency = "CNY", compact = false) {
@@ -770,9 +852,7 @@ function formatPortfolioMoney(value, currency = "CNY", compact = false) {
   const symbols = { CNY: "¥", HKD: "HK$", USD: "$", KRW: "₩" };
   const prefix = symbols[currency] || `${currency} `;
   const absolute = Math.abs(number);
-  if (compact && absolute >= 100_000_000) return `${number < 0 ? "-" : ""}${prefix}${(absolute / 100_000_000).toFixed(2)}亿`;
-  if (compact && absolute >= 10_000) return `${number < 0 ? "-" : ""}${prefix}${(absolute / 10_000).toFixed(2)}万`;
-  const digits = currency === "KRW" ? 0 : 2;
+  const digits = 2;
   return `${number < 0 ? "-" : ""}${prefix}${absolute.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
@@ -790,19 +870,26 @@ function formatPortfolioUnitPrice(value, currency, market) {
 function sortedPortfolioPositions(positions) {
   if (state.portfolioSortKey === "default") return [...positions];
   const fields = {
-    market_value: "market_value_cny",
-    daily_pnl: "daily_pnl_cny",
-    total_pnl: "pnl_cny",
+    market_value: "market_value_base",
+    daily_pnl: "daily_pnl_base",
+    total_pnl: "pnl_base",
+    daily_pct: "change_pct",
+    total_pct: "pnl_pct",
   };
   const field = fields[state.portfolioSortKey];
   if (!field) return [...positions];
   const direction = state.portfolioSortDirection === "asc" ? 1 : -1;
   return [...positions].sort((left, right) => {
-    const leftValue = Number(left[field]);
-    const rightValue = Number(right[field]);
-    const leftMissing = left[field] === null || left[field] === undefined || !Number.isFinite(leftValue);
-    const rightMissing = right[field] === null || right[field] === undefined || !Number.isFinite(rightValue);
+    const leftRaw = state.portfolioSortKey === 'daily_pct' && 'daily_change_pct' in left ? left.daily_change_pct : left[field];
+    const rightRaw = state.portfolioSortKey === 'daily_pct' && 'daily_change_pct' in right ? right.daily_change_pct : right[field];
+    const leftValue = Number(leftRaw);
+    const rightValue = Number(rightRaw);
+    const leftMissing = leftRaw === null || leftRaw === undefined || !Number.isFinite(leftValue)
+      || state.portfolioSortKey === 'daily_pct' && left.daily_pnl_base == null;
+    const rightMissing = rightRaw === null || rightRaw === undefined || !Number.isFinite(rightValue)
+      || state.portfolioSortKey === 'daily_pct' && right.daily_pnl_base == null;
     if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (leftMissing && rightMissing) return String(left.name || left.symbol).localeCompare(String(right.name || right.symbol), 'zh-CN');
     if (leftValue !== rightValue) return (leftValue - rightValue) * direction;
     return String(left.name || left.symbol).localeCompare(String(right.name || right.symbol), "zh-CN");
   });
@@ -819,6 +906,7 @@ function syncPortfolioSortControls() {
 
 function portfolioStat(className, label, primary, secondary, tone = "") {
   const node = el("div", `portfolio-stat ${className}`);
+  node.title = `${label}：${primary}${secondary ? `；${secondary}` : ""}`;
   node.append(
     el("span", "portfolio-cell-label", label),
     el("strong", tone, primary),
@@ -836,58 +924,133 @@ function setPortfolioMetric(id, value, tone = "neutral") {
   if (tone !== "neutral") node.parentElement.classList.add(tone);
 }
 
+function portfolioDailyQuoteNotes(summary) {
+  const notes = [];
+  if (summary.daily_pnl_delayed_count) notes.push(`${summary.daily_pnl_delayed_count} 项延迟`);
+  if (summary.daily_pnl_prior_session_count) notes.push('含上一交易日');
+  if (summary.daily_pnl_quote_time) notes.push(`最早 ${formatDate(summary.daily_pnl_quote_time, true)}`);
+  if (summary.daily_pnl_fx_reference_count) notes.push('按最近有效参考汇率折算');
+  for (const period of summary.daily_pnl_periods || []) {
+    const market = {US:'美股',CN:'A股',HK:'港股',KR:'韩股'}[period.market] || period.market;
+    notes.push(`${market} ${formatDate(period.start, true)}—${formatDate(period.end, true)} UTC+8${period.closed ? '（收盘）' : '（盘中）'}`);
+  }
+  return notes;
+}
+
+function portfolioReferenceValuation(portfolio, cached = false) {
+  const s = portfolio.summary || {}, runtime = portfolio.runtime || {};
+  return !cached && !runtime.restored_from_cache && ['live', 'partial'].includes(runtime.status)
+    && (s.base_valuation_complete ?? s.valuation_complete) === true;
+}
+
+function portfolioCapitalMetrics(portfolio, cached = false) {
+  const s = portfolio.summary || {}, runtime = portfolio.runtime || {};
+  const number = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const principal = number(s.principal_base), assets = number(s.net_assets_base);
+  const blocked = cached || runtime.restored_from_cache || ['stale', 'error', 'waiting'].includes(runtime.status);
+  const confirmed = !blocked && s.valuation_current !== false && !(s.stale_valued_count > 0)
+    && s.principal_status === 'available' ? number(s.principal_return_pct) : null;
+  const reference = confirmed == null && principal > 0 && assets != null && portfolioReferenceValuation(portfolio, cached);
+  const rate = confirmed ?? (reference ? (assets / principal - 1) * 100 : null);
+  const estimated = s.cash_status === 'estimated';
+  const note = estimated ? '估算：库存现金＝本金－持仓成本＋已记录已实现净盈亏＋已到账净分红；总资产＝持仓市值＋库存现金＋应收账款－应付账款。未录入的出入金及费用未计入。'
+    : s.cash_status === 'unavailable' ? '请设置本金以估算现金，或填写实际库存现金；缺少成本、已实现盈亏或汇率时暂不计算。'
+    : reference ? '参考值：按已有持仓报价、已记录现金及汇率计算；行情或汇率尚待确认。'
+    : blocked ? '上次估值，等待行情确认'
+    : ({unset:'请先填写并保存实际本金',empty:'暂无持仓，不计算盈亏率',incomplete:'缺少行情或汇率，暂不计算',unavailable:'行情或汇率不可用，暂不计算',available:'按有效持仓估值计算'})[s.principal_status] || '请先填写并保存实际本金';
+  return {rate, reference: reference || (estimated && rate != null), estimated, note};
+}
+
+function portfolioPrincipalValue(value) {
+  const text = String(value).trim();
+  if (!/^(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null;
+  const amount = Number(text.replaceAll(',', ''));
+  return Number.isFinite(amount) && amount >= 0 && amount <= 1000000000000 ? amount : null;
+}
+
+function formatPortfolioPrincipal(value) {
+  return Number(value).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
 function renderPortfolio(data) {
+  window.Investment?.renderFx();
   const portfolio = data.portfolio || {};
   const summary = portfolio.summary || {};
   const runtime = portfolio.runtime || {};
   const positions = portfolio.positions || [];
+  renderPortfolioAlerts(portfolio);
   const principalInput = document.getElementById("portfolio-principal-input");
+  const principal = portfolio.account?.principal ?? summary.principal_cny;
+  document.querySelector('label[for="portfolio-principal-input"]').textContent = `本金（${portfolio.account?.principal_currency || "CNY"}）`;
   if (!state.portfolioPrincipalDirty && !state.portfolioPrincipalSaving && document.activeElement !== principalInput) {
-    principalInput.value = summary.principal_cny == null ? "" : Number(summary.principal_cny).toFixed(2);
+    principalInput.value = principal == null ? "" : formatPortfolioPrincipal(principal);
+    principalInput.setCustomValidity('');
   }
-  const principalReturn = summary.principal_return_pct;
+  const capital = portfolioCapitalMetrics(portfolio, Boolean(data._startup_cache));
+  const principalReturn = capital.rate;
   const loss = principalReturn != null && principalReturn < 0;
-  document.getElementById("portfolio-capital-rate-label").textContent = loss ? "持仓相对本金亏损率" : principalReturn > 0 ? "持仓相对本金收益率" : "持仓相对本金盈亏率";
-  setPortfolioMetric("portfolio-capital-rate", principalReturn == null ? "--" : `${Math.abs(principalReturn).toFixed(2)}%`, loss ? "negative" : principalReturn > 0 ? "positive" : "neutral");
-  document.getElementById("portfolio-capital-status").textContent = ({
-    unset: "本金为零或尚未设置", empty: "暂无持仓，不计算亏损率", incomplete: "缺少行情或汇率，暂不计算",
-    unavailable: "行情过期或异常，暂不计算", available: "按有效持仓估值计算",
-  })[summary.principal_status] || "尚未设置本金";
+  document.getElementById("portfolio-capital-rate-label").textContent = loss ? "总资产相对本金亏损率" : principalReturn > 0 ? "总资产相对本金收益率" : "总资产相对本金盈亏率";
+  setPortfolioMetric("portfolio-capital-rate", principalReturn == null ? (summary.principal_status === 'unset' ? '请设置本金' : '--') : `${principalReturn > 0 ? '+' : ''}${principalReturn.toFixed(2)}%`, loss ? "negative" : principalReturn > 0 ? "positive" : "neutral");
+  document.getElementById("portfolio-capital-rate").title = capital.note;
+  document.getElementById("portfolio-capital-status").textContent = capital.note;
   document.getElementById("portfolio-clear-button").disabled = !positions.length || state.portfolioDeletePending;
   document.getElementById("add-position-button").disabled = state.portfolioDeletePending;
   const query = state.portfolioSearch.trim().toLocaleLowerCase();
-  const filteredPositions = positions.filter((item) => {
+  const matchesHoldingFilter = (item) => {
     const typeMatches = state.portfolioTypeFilter === "all"
       || (state.portfolioTypeFilter === "fund" && item.market === "FUND")
       || (state.portfolioTypeFilter === "stock" && item.market !== "FUND");
     const haystack = `${item.name || ""} ${item.symbol || ""} ${item.fund_type || ""}`.toLocaleLowerCase();
     return typeMatches && (!query || haystack.includes(query));
-  });
+  };
+  const filteredPositions = positions.filter(matchesHoldingFilter);
+  const pending = portfolio.pending_positions || [];
+  const filteredPending = pending.filter(matchesHoldingFilter);
   const displayPositions = sortedPortfolioPositions(filteredPositions);
   syncPortfolioSortControls();
-  setPortfolioMetric("portfolio-market-value", formatPortfolioMoney(summary.total_market_value_cny, "CNY", true));
-  setPortfolioMetric("portfolio-cost-value", formatPortfolioMoney(Number(summary.total_cost_cny || 0), "CNY", true));
-  const pnl = summary.total_pnl_cny;
-  const dailyPnl = summary.daily_pnl_cny;
-  setPortfolioMetric("portfolio-total-pnl", formatPortfolioMoney(pnl, "CNY", true), pnl > 0 ? "positive" : pnl < 0 ? "negative" : "neutral");
-  setPortfolioMetric("portfolio-daily-pnl", formatPortfolioMoney(dailyPnl, "CNY", true), dailyPnl > 0 ? "positive" : dailyPnl < 0 ? "negative" : "neutral");
-  document.getElementById("portfolio-daily-coverage").textContent = `可计 ${summary.daily_pnl_count ?? 0}/${summary.position_count || 0}${summary.daily_pnl_complete === false ? " · 部分汇总" : ""}`;
+  const baseCurrency = portfolio.base_currency || "CNY";
+  setPortfolioMetric("portfolio-net-assets", formatPortfolioMoney(summary.net_assets_base, baseCurrency, true));
+  document.getElementById('portfolio-net-assets').title = `总资产＝组合市值＋库存现金＋应收账款－应付账款，折算 ${baseCurrency}。${capital.note}`;
+  setPortfolioMetric("portfolio-cash-value", formatPortfolioMoney(summary.cash_base, baseCurrency, true));
+  const cashNote = document.getElementById('portfolio-cash-status');
+  cashNote.textContent = `${summary.cash_status === 'estimated' ? '自动估算' : summary.cash_status === 'manual' ? '手动录入' : '待设置'} · ${baseCurrency}`;
+  const cashDetails = (summary.cash_details || []).map(row => `${row.currency} ${formatPortfolioPrincipal(row.amount)}`).join('；');
+  document.getElementById('portfolio-cash-open').title = `${cashDetails ? cashDetails + '。' : capital.note} 汇总折算 ${baseCurrency}；点击修改实际余额和币种。`;
+  document.getElementById("portfolio-base-currency").value = baseCurrency;
+  for (const id of ["portfolio-market-value", "portfolio-cost-value"]) {
+    document.getElementById(id).parentElement.querySelector("small").textContent = `折算 ${baseCurrency}`;
+    document.getElementById(id).title = `折算 ${baseCurrency}`;
+  }
+  setPortfolioMetric("portfolio-market-value", formatPortfolioMoney(summary.total_market_value_base, baseCurrency, true));
+  setPortfolioMetric("portfolio-cost-value", formatPortfolioMoney(summary.total_cost_base, baseCurrency, true));
+  const pnl = summary.total_pnl_base;
+  const dailyPnl = summary.daily_pnl_base;
+  setPortfolioMetric("portfolio-total-pnl", formatPortfolioMoney(pnl, baseCurrency, true), pnl > 0 ? "positive" : pnl < 0 ? "negative" : "neutral");
+  setPortfolioMetric("portfolio-daily-pnl", formatPortfolioMoney(dailyPnl, baseCurrency, true), dailyPnl > 0 ? "positive" : dailyPnl < 0 ? "negative" : "neutral");
+  const dailyCoverage = document.getElementById("portfolio-daily-coverage");
+  const dailyCount = summary.daily_pnl_count ?? 0;
+  const dailyNotes = portfolioDailyQuoteNotes(summary);
+  dailyCoverage.textContent = [`可计 ${dailyCount}/${summary.position_count || 0}`,
+    !dailyCount && summary.position_count ? '等待有效报价' : summary.daily_pnl_complete === false ? '部分汇总' : '',
+    ...dailyNotes].filter(Boolean).join(' · ');
+  dailyCoverage.title = dailyCoverage.textContent;
+  document.getElementById('portfolio-daily-pnl').title = dailyCoverage.textContent;
+  const dailyPctNode = document.getElementById('portfolio-daily-pnl-pct');
+  dailyPctNode.textContent = signedPercent(summary.daily_pnl_pct);
+  dailyPctNode.className = summary.daily_pnl_pct > 0 ? 'positive' : summary.daily_pnl_pct < 0 ? 'negative' : '';
+  dailyPctNode.title = `可计算持仓的当日盈亏 ÷ 同批持仓的昨收市值；${dailyCoverage.textContent}。按当前持仓数量估算，不含日内交易和汇兑损益。`;
   const pnlPct = summary.total_pnl_pct;
   const pnlPctNode = document.getElementById("portfolio-total-pnl-pct");
   pnlPctNode.textContent = signedPercent(pnlPct);
   pnlPctNode.className = pnlPct > 0 ? "positive" : pnlPct < 0 ? "negative" : "";
-  document.getElementById("portfolio-position-count").textContent = Number(summary.position_count || 0);
-  document.getElementById("portfolio-priced-count").textContent = `已估值 ${summary.valued_count ?? summary.priced_count ?? 0}/${summary.position_count || 0}${summary.valuation_complete === false ? " · 部分汇总" : ""}${summary.stale_valued_count ? ` · ${summary.stale_valued_count} 项旧报价` : ""}`;
-  document.getElementById("portfolio-result-count").textContent = filteredPositions.length === positions.length
-    ? `${positions.length} 个持仓`
-    : `显示 ${filteredPositions.length} / ${positions.length}`;
+  document.getElementById('portfolio-market-value').title += ` · 已估值 ${summary.valued_count ?? summary.priced_count ?? 0}/${summary.position_count || 0}${summary.valuation_complete === false ? ' · 部分汇总' : ''}${summary.stale_valued_count ? ` · ${summary.stale_valued_count} 项报价或汇率待确认` : ''}`;
 
   const dot = document.getElementById("portfolio-live-dot");
   const statusText = document.getElementById("portfolio-live-text");
   dot.className = runtime.restored_from_cache ? "warning" : runtime.refresh_in_progress ? "running" : (runtime.errors || []).length ? "warning" : "";
   statusText.textContent = !positions.length
     ? "等待持仓"
-    : runtime.restored_from_cache ? "上次行情快照 · 待确认" : runtime.refresh_in_progress ? "正在更新行情" : (runtime.errors || []).length ? `${runtime.errors.length} 项行情警告` : "持仓行情已同步";
+    : runtime.restored_from_cache ? "上次行情快照 · 待确认" : runtime.refresh_in_progress ? "正在更新行情" : summary.valuation_current === false ? "参考估值 · 行情或汇率待确认" : (runtime.errors || []).length ? `${runtime.errors.length} 项行情警告` : "持仓行情已同步";
   const hasFunds = positions.some((item) => item.market === "FUND");
   document.getElementById("portfolio-update-caption").textContent = runtime.updated_at
     ? `${hasFunds ? `股票行情 ${intervalLabel(runtime.interval_seconds, 20)}更新 · 基金净值按交易日确认` : `行情 ${intervalLabel(runtime.interval_seconds, 20)}更新`} · ${formatDate(runtime.updated_at, true)}`
@@ -895,13 +1058,14 @@ function renderPortfolio(data) {
 
   const list = document.getElementById("portfolio-position-list");
   list.replaceChildren();
-  if (!positions.length) {
+  if (!positions.length && !pending.length) {
     list.append(emptyState("还没有持仓", "点击“新增持仓”录入第一笔仓位"));
-  } else if (!displayPositions.length) {
-    list.append(emptyState("没有匹配的持仓", "调整筛选条件或搜索关键词"));
+  } else if (!displayPositions.length && !filteredPending.length) {
+    list.append(emptyState("没有匹配的标的", "调整筛选条件或搜索关键词"));
   } else {
     const fragment = document.createDocumentFragment();
     displayPositions.forEach((item) => fragment.append(renderPortfolioPosition(item)));
+    if (window.PortfolioPending) filteredPending.forEach((item) => fragment.append(window.PortfolioPending.render(item)));
     list.append(fragment);
   }
 
@@ -927,21 +1091,27 @@ function renderPortfolio(data) {
       const fill = el("i");
       fill.style.width = `${clamp(Number(item.weight_pct || 0), 2, 100)}%`;
       track.append(fill);
-      row.append(el("span", "", marketLabels[item.market] || item.market), track, el("strong", "", `${Number(item.weight_pct || 0).toFixed(1)}%`));
+      row.append(el("span", "", marketLabels[item.market] || item.market), track, el("strong", "", item.weight_pct == null ? "--" : `${Number(item.weight_pct).toFixed(1)}%`));
       allocationList.append(row);
     });
   }
+  window.PortfolioResearch?.update(portfolio);
+  window.PortfolioDividends?.update(portfolio);
+  window.PortfolioTrades?.update(portfolio);
+  window.PortfolioWorkspace?.syncAnalysis();
 }
 
 function renderPortfolioPosition(item) {
   const isFund = item.market === "FUND";
+  const baseCurrency = state.dashboard?.portfolio?.base_currency || "CNY";
   const row = el("article", "portfolio-position-row");
+  row.classList.toggle("portfolio-position-compact", Boolean(window.PortfolioWorkspace));
   row.classList.toggle("fund-position", isFund);
   row.tabIndex = 0;
   row.title = isFund ? `双击查看 ${item.name} 历史净值` : `双击查看 ${item.name} K 线`;
   row.setAttribute("aria-label", `${item.name} 持仓，${row.title}`);
   row.addEventListener("dblclick", (event) => {
-    if (event.target instanceof Element && event.target.closest("button, a")) return;
+    if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, summary, details")) return;
     event.preventDefault();
     openPortfolioChart(item);
   });
@@ -950,9 +1120,9 @@ function renderPortfolioPosition(item) {
   });
   const asset = el("div", "portfolio-asset");
   const assetTop = el("div", "portfolio-asset-heading");
-  assetTop.append(el("span", "market-badge", marketLabels[item.market] || item.market), el("strong", "", item.name));
-  assetTop.title = item.name;
-  const assetMeta = el("span", "portfolio-asset-meta", isFund && item.fund_type ? `${item.symbol} · ${item.fund_type}` : item.symbol);
+  assetTop.append(el("span", "market-badge", marketLabels[item.market] || item.market), el("strong", "", instrumentName(item)));
+  assetTop.title = instrumentLabel(item);
+  const assetMeta = el("span", "portfolio-asset-meta", [item.symbol, item.holding_status || "已建仓", isFund ? item.fund_type : ""].filter(Boolean).join(" · "));
   assetMeta.title = assetMeta.textContent;
   const quoteLine = el("div", "portfolio-asset-quote");
   const quoteLink = el("a", "portfolio-quote-link", formatPortfolioUnitPrice(item.price, item.currency, item.market));
@@ -964,7 +1134,7 @@ function renderPortfolioPosition(item) {
     ? `${signedPercent(item.change_pct)} · ${item.nav_date ? item.nav_date.slice(5) : "等待净值"}`
     : signedPercent(item.change_pct);
   quoteLine.append(quoteLink, el("span", scoreClass(item.change_pct), quoteCaption));
-  asset.append(assetTop, instrumentBriefNode(item), assetMeta, quoteLine);
+  asset.append(assetTop, instrumentBriefNode(item, true), assetMeta, quoteLine);
   if(item.market === "US") {
     const sessionLine=el("small","portfolio-session-note",`${item.price_label || "最新价"} · ${item.quote_time ? formatDate(item.quote_time,true) : "等待报价"}`);
     sessionLine.title=[item.source_note,item.quote_error].filter(Boolean).join(" · ");
@@ -977,23 +1147,26 @@ function renderPortfolioPosition(item) {
     "portfolio-quantity",
     isFund ? "持有份额" : "持仓数量",
     `${formatPositionQuantity(item.quantity)} ${isFund ? "份" : "股"}`,
-    `均价 ${formatPortfolioUnitPrice(item.average_cost, item.currency, item.market)}`,
+    window.PortfolioWorkspace ? '' : `均价 ${formatPortfolioUnitPrice(item.average_cost, item.currency, item.market)}`,
   );
+  const cost = portfolioStat('portfolio-unit-cost', '成本价',
+    formatPortfolioUnitPrice(item.average_cost, item.currency, item.market), '');
+  cost.title = `每${isFund ? '份' : '股'}持仓成本 · ${item.currency}`;
   const value = portfolioStat(
     "portfolio-value",
     "折合市值",
-    formatPortfolioMoney(item.market_value_cny, "CNY", true),
-    formatPortfolioMoney(item.market_value, item.currency, true),
+    formatPortfolioMoney(item.market_value_base, baseCurrency, true),
+    item.currency === baseCurrency ? '' : formatPortfolioMoney(item.market_value, item.currency, true),
   );
-  const dailyValue = Number(item.daily_pnl_cny || 0);
+  const dailyValue = Number(item.daily_pnl_base || 0);
   const dailyTone = dailyValue > 0 ? "positive" : dailyValue < 0 ? "negative" : "";
   const daily = portfolioStat(
     "portfolio-daily-pnl",
     "今日盈亏",
-    formatPortfolioMoney(item.daily_pnl_cny, "CNY", true),
+    formatPortfolioMoney(item.daily_pnl_base, baseCurrency, true),
     isFund && item.nav_date
       ? `${item.nav_date.slice(5)} 净值日 ${formatPortfolioMoney(item.latest_nav_pnl_cny, "CNY", true)}`
-      : item.quote_status === "stale" ? "报价待更新" : item.price == null ? "等待价格" : signedPercent(item.change_pct),
+      : item.daily_pnl_base == null ? '--' : signedPercent('daily_change_pct' in item ? item.daily_change_pct : item.change_pct),
     dailyTone,
   );
   const pnlValue = Number(item.pnl || 0);
@@ -1001,11 +1174,16 @@ function renderPortfolioPosition(item) {
   const pnl = portfolioStat(
     "portfolio-pnl",
     "浮动盈亏",
-    formatPortfolioMoney(item.pnl_cny, "CNY", true),
+    formatPortfolioMoney(item.pnl_base, baseCurrency, true),
     item.pnl_pct === null ? "--" : signedPercent(item.pnl_pct),
     pnlTone,
   );
   const weight = el("div", "portfolio-stat portfolio-weight");
+  if (item.dividends?.received_count) {
+    const income = el("small", "portfolio-dividend-income", `已收股息 ${formatPortfolioMoney(item.dividends.received_net_base, baseCurrency, true)}`);
+    income.title = "已登记净股息，独立于浮动盈亏；原始均价不变";
+    pnl.append(income);
+  }
   weight.append(
     el("span", "portfolio-cell-label", "仓位"),
     el("strong", "", item.weight_pct === null ? "--" : `${Number(item.weight_pct).toFixed(1)}%`),
@@ -1022,11 +1200,24 @@ function renderPortfolioPosition(item) {
     el("span", "", analysis.reason || "等待行情与新闻"),
     el("small", "", `${Number(item.news_count || 0)} 条相关消息 · 综合信号 ${item.signal_available === false ? "--" : formatScore(item.signal_score)}`),
   );
-  signal.title = (analysis.risks || []).join("；") || "暂未发现突出风险";
-  const research = el("button", "text-button", "研究 / 复盘");
+  signal.title = [`${analysis.action || '继续观察'} · ${analysis.direction || '中性'}`, analysis.reason || '等待行情与新闻', (analysis.risks || []).join('；')].filter(Boolean).join('\n');
+  signal.setAttribute("aria-label", "分析与行动");
+  const research = el("button", "icon-button portfolio-research-control");
   research.type = "button";
-  research.addEventListener("click", () => openStrategyEditor({name:item.name,target:`${item.market}:${item.symbol}`,kind:"stock",risks:(analysis.risks || []).join("\n")}));
-  signal.append(research);
+  research.append(uiIcon("notebook-pen"));
+  research.title = `标的资料 · ${instrumentName(item)}`;
+  research.setAttribute("aria-label", research.title);
+  research.setAttribute("aria-controls", "pw-profile-actions");
+  research.addEventListener("click", () => window.PortfolioWorkspace ? window.PortfolioWorkspace.openProfileActions(item, research)
+    : openStrategyEditor({name:item.name,target:`${item.market}:${item.symbol}`,kind:"stock",risks:(analysis.risks || []).join("\n")}));
+
+  const riskButton = el("button", "icon-button portfolio-risk-control");
+  riskButton.type = "button";
+  riskButton.append(uiIcon("bell"));
+  riskButton.title = `设置 ${instrumentName(item)} 的止盈止损与仓位警戒线\n${portfolioRiskLabel(item)}`;
+  riskButton.setAttribute("aria-label", `设置 ${instrumentName(item)} 的止盈止损与仓位警戒线`);
+  riskButton.classList.toggle("has-rules", item.risk_settings?.enabled !== false && portfolioRiskFields.some(key => item.risk_settings?.[key] != null));
+  riskButton.addEventListener("click", () => openPositionRisk(item));
 
   const actions = el("div", "portfolio-actions");
   const buy = el("button", "icon-button");
@@ -1047,15 +1238,135 @@ function renderPortfolioPosition(item) {
   clear.title = `删除 ${item.name} 的持仓记录`;
   clear.setAttribute("aria-label", clear.title);
   clear.addEventListener("click", () => removePortfolioPosition(item));
-  [buy, sell, clear].forEach(button => button.disabled = state.portfolioDeletePending);
-  actions.append(buy, sell, clear);
-  row.append(asset, quantity, value, daily, pnl, weight, actions, signal);
+  [buy, sell, clear, research, riskButton].forEach(button => button.disabled = state.portfolioDeletePending);
+  actions.append(buy, sell, clear, research, riskButton);
+  if (window.PortfolioWorkspace) {
+    for (const metric of isFund ? [pnl] : [daily, pnl]) {
+      const amount = metric.querySelector('strong'), percent = metric.querySelector('small');
+      if (amount && percent) {
+        const result = el('div', 'pw-inline-result');
+        result.append(amount, percent); metric.append(result);
+      }
+    }
+    const profile = el("button", "icon-button"); profile.type = "button"; profile.append(uiIcon("settings"));
+    profile.title = `编辑 ${instrumentName(item)} 的持仓资料`; profile.setAttribute("aria-label", profile.title);
+    profile.disabled = state.portfolioDeletePending;
+    profile.addEventListener("click", () => window.PortfolioWorkspace.editPlan(item)); actions.append(profile);
+    actions.append(window.PortfolioWorkspace.analysisExportButton(item));
+    signal.classList.add('pw-position-signal');
+    const direction = signal.querySelector('strong');
+    direction.textContent = analysis.direction || '中性';
+    direction.classList.add('pw-quote-direction');
+    quoteLine.append(direction);
+    const reason = signal.querySelector('span');
+    reason.textContent = reason.textContent.replace(/当日\s*[+−-]?\d+(?:\.\d+)?%[，,。]?\s*/g, '').trim();
+    const signalTone = text => {
+      const value = Number(text.match(/[+−-]?\d+(?:\.\d+)?/)?.[0].replace('−', '-'));
+      return value > 0 ? 'positive' : value < 0 ? 'negative' : '';
+    };
+    const pieces = reason.textContent.split(/((?:当日|新闻|Trump)\s*[+−-]?\d+(?:\.\d+)?%?[，,。]?)/);
+    reason.replaceChildren(...pieces.map((text, index) => index % 2
+      ? el('span', `pw-signal-factor ${signalTone(text)}`, text) : document.createTextNode(text)));
+    const signalSummary = signal.querySelector('small');
+    signalSummary.classList.add('pw-asset-summary');
+    const scoreText = item.signal_available === false ? '--' : formatScore(item.signal_score);
+    const newsLink = el('a', 'pw-news-link', `${Number(item.news_count || 0)} 条相关消息`);
+    newsLink.href = '#signals';
+    newsLink.title = `查看${instrumentName(item)}在事件中心的新闻`;
+    newsLink.addEventListener('click', event => {
+      event.preventDefault();
+      openPortfolioNews(item);
+    });
+    signalSummary.replaceChildren(
+      newsLink, document.createTextNode(' · 综合信号 '),
+      el('span', signalTone(scoreText), scoreText)
+    );
+    assetTop.append(assetMeta);
+    asset.append(signalSummary, signal);
+    row.append(asset, window.PortfolioWorkspace.render(item, {quantity, cost, value, daily, pnl, weight}), actions);
+  } else row.append(asset, quantity, value, daily, pnl, weight, actions, signal);
   return row;
+}
+
+const portfolioRiskFields = ["take_profit_price", "stop_price", "take_profit_pct", "stop_loss_pct", "weight_min_pct", "weight_max_pct"];
+const portfolioRiskNames = {take_profit_price:"止盈价格", stop_price:"止损价格", take_profit_pct:"止盈涨幅", stop_loss_pct:"止损跌幅", weight_min_pct:"仓位下限", weight_max_pct:"仓位上限"};
+const portfolioRiskAlternatives = {take_profit_price:"take_profit_pct", take_profit_pct:"take_profit_price", stop_price:"stop_loss_pct", stop_loss_pct:"stop_price"};
+
+function portfolioRiskLabel(item) {
+  const rules = item.risk_settings || {};
+  const configured = portfolioRiskFields.filter(key => rules[key] != null);
+  if (!configured.length) return "设置止盈止损 / 仓位线";
+  const states = state.dashboard?.portfolio?.risk?.states || {};
+  const notes = configured.map(key => {
+    const status = states[`${item.market}:${item.symbol}:${key}`];
+    const matched = status?.signature?.[0] === (item.created_at || null) && status?.signature?.[2] === (item.risk_revision || null) && status?.threshold === rules[key]
+      && (!["take_profit_pct", "stop_loss_pct"].includes(key) || status.signature[3] === item.average_cost);
+    const label = !rules.enabled ? "已暂停" : state.dashboard?.portfolio?.runtime?.restored_from_cache ? "等待行情确认" : !matched ? "待检测" : ({triggered:"已触线", recovering:"恢复确认中", watching:"监测中", paused:status.reason || "待更新"})[status.status];
+    return `${portfolioRiskNames[key]} ${rules[key]}${key.endsWith("_price") ? ` ${item.currency}` : "%"} · ${label}`;
+  });
+  return notes.join("；");
+}
+
+function openPositionRisk(item) {
+  const form = document.getElementById("position-risk-form");
+  const rules = item.risk_settings || {};
+  form.reset();
+  form.elements.market.value = item.market;
+  form.elements.symbol.value = item.symbol;
+  form.elements.enabled.checked = rules.enabled !== false;
+  form.elements.desktop_notify.checked = rules.desktop_notify !== false;
+  portfolioRiskFields.forEach(key => form.elements[key].value = rules[key] ?? "");
+  const available = Boolean(state.dashboard?.portfolio?.risk?.system_notifications_available);
+  form.elements.desktop_notify.disabled = !available;
+  document.getElementById("position-risk-channel").textContent = available
+    ? "后台运行时检测；系统勿扰或通知权限可能影响弹窗。同一轮越线只提醒一次，恢复后可再次触发，间隔至少 5 分钟。"
+    : "当前环境使用站内提醒与事件中心记录，不提供手机后台推送。后台须持续运行。";
+  document.getElementById("position-risk-title").textContent = `${instrumentName(item)} · 警戒线`;
+  const cost = Number.isFinite(item.average_cost) && item.average_cost > 0 ? formatPortfolioUnitPrice(item.average_cost, item.currency, item.market) : "未设置，百分比提醒暂停";
+  document.getElementById("position-risk-quote").textContent = `平均成本 ${cost} · 当前 ${formatPortfolioUnitPrice(item.price, item.currency, item.market)} · 仓位 ${item.weight_pct == null ? "--" : `${Number(item.weight_pct).toFixed(2)}%`} · 报价 ${formatDate(item.quote_time, true)}`;
+  document.getElementById("position-risk-error").textContent = "";
+  document.getElementById("position-risk-dialog").showModal();
+}
+
+function openPortfolioAlert(item) {
+  setView("portfolio");
+  const position = state.dashboard?.portfolio?.positions.find(p => p.market === item.market && p.symbol === item.symbol);
+  if (position) openPositionRisk(position);
+  else showToast("该持仓已删除，保留历史触线记录");
+}
+
+function renderPortfolioAlerts(portfolio) {
+  const risk = portfolio.risk || {};
+  const enabled = (portfolio.positions || []).filter(p => p.risk_settings?.enabled && portfolioRiskFields.some(key => p.risk_settings[key] != null)).length;
+  document.getElementById("portfolio-alert-count").textContent = `${enabled} 个持仓已设线`;
+  document.getElementById("portfolio-alert-runtime").textContent = risk.storage_error || risk.notification_error || (enabled
+    ? `${portfolio.runtime?.restored_from_cache ? "上次检测" : "最近检测"} ${formatDate(risk.checked_at, true)} · 随持仓行情更新`
+    : "暂无已启用的警戒线");
+  const container = document.getElementById("portfolio-alert-list");
+  const events = (risk.events || []).slice(0, 8);
+  const allEvents = risk.events || [];
+  if (state.portfolioAlertIds) {
+    const fresh = allEvents.filter(event => !state.portfolioAlertIds.has(event.id));
+    if (fresh.length) showToast(fresh.length === 1 ? fresh[0].title : `${fresh.length} 项持仓触及警戒线，详见持仓组合`, "error");
+  }
+  state.portfolioAlertIds = new Set(allEvents.map(event => event.id));
+  const signature = JSON.stringify(events);
+  if (container.dataset.signature === signature) return;
+  container.dataset.signature = signature;
+  container.replaceChildren();
+  if (!events.length) { container.append(el("p", "quiet-note", "暂无触线记录")); return; }
+  events.forEach(event => {
+    const row = el("article", "portfolio-alert-record");
+    row.append(el("strong", "negative", event.title), el("p", "", event.reason_summary),
+      el("small", "quiet-note", `检测 ${formatDate(event.created_at, true)} · 报价 ${formatDate(event.quote_time, true)}${event.notification === "failed" ? " · 系统弹窗失败" : ""}`));
+    container.append(row);
+  });
 }
 
 function formatPortfolioChartValue(value, item, withCurrency = true) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "--";
+  if (item?.instrument_type === "INDEX" || item?.unit === "points") return number.toLocaleString("zh-CN", {minimumFractionDigits:2, maximumFractionDigits:2}) + (withCurrency ? " 点" : "");
   if (!withCurrency) {
     const digits = item?.market === "FUND" || Math.abs(number) < 10 ? 4 : Math.abs(number) >= 1000 ? 0 : 2;
     return number.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -1072,17 +1383,38 @@ function formatChartVolume(value) {
   return number.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
+function selectPortfolioChartInterval(interval) {
+  if (!PORTFOLIO_INTRADAY_INTERVALS.includes(interval) || state.portfolioChartItem?.market === "FUND") return;
+  if (state.portfolioChartItem?.instrument_type === "CFD" && interval !== "1m") return;
+  if (state.portfolioChartMode === "intraday" && state.portfolioChartCandleInterval === interval) return;
+  if (state.portfolioChartMode !== "intraday") state.portfolioChartPeriod = PORTFOLIO_CHART_CONFIG.intraday.defaultPeriod;
+  state.portfolioChartMode = "intraday";
+  state.portfolioChartCandleInterval = interval;
+  return loadPortfolioChart();
+}
+
 function syncPortfolioChartPeriodControls() {
   const item = state.portfolioChartItem;
+  const isPriceLine = item?.instrument_type === "CFD";
+  const interval = document.getElementById("portfolio-chart-candle-interval");
+  interval.value = state.portfolioChartMode === "intraday" ? state.portfolioChartCandleInterval : "";
+  interval.disabled = item?.market === "FUND";
+  interval.classList.toggle("active", state.portfolioChartMode === "intraday");
+  interval.setAttribute("aria-label", isPriceLine ? "分时采样周期" : "分时K线周期");
+  interval.title = isPriceLine ? "来源只提供分时采样，没有开高低收及成交量" : "选择每根K线的时长；当前未接入秒级行情";
+  for (const option of interval.options || []) {
+    option.disabled = !PORTFOLIO_INTRADAY_INTERVALS.includes(option.value) || (isPriceLine && option.value !== "1m");
+    if (option.value === "1m") option.textContent = isPriceLine ? "1 分钟采样" : "1 分钟 K";
+  }
   document.querySelectorAll("#portfolio-chart-modes button").forEach((button) => {
-    const unavailable = item?.market === "FUND" && button.dataset.chartMode === "intraday";
+    const unavailable = (item?.market === "FUND" && button.dataset.chartMode === "intraday") || (isPriceLine && button.dataset.chartMode !== "intraday");
     const fundLabels = { intraday: "1 分钟 K", daily: "日净值", weekly: "周净值" };
     button.textContent = item?.market === "FUND" ? fundLabels[button.dataset.chartMode] : PORTFOLIO_CHART_CONFIG[button.dataset.chartMode].label;
     button.disabled = unavailable;
     button.classList.toggle("active", button.dataset.chartMode === state.portfolioChartMode);
   });
   const btcMinutes = item?.market === "ASSET" && item.symbol === "BTC" && state.portfolioChartMode === "intraday";
-  const config = btcMinutes ? {periods:{"1d":"近 300 根"}} : PORTFOLIO_CHART_CONFIG[state.portfolioChartMode];
+  const config = isPriceLine ? {periods:{"1d":"当日采样"}} : btcMinutes ? {periods:{"1d":"近 300 分钟"}} : PORTFOLIO_CHART_CONFIG[state.portfolioChartMode];
   const container = document.getElementById("portfolio-chart-periods");
   const expected = JSON.stringify(config.periods);
   if (container.dataset.periods !== expected) {
@@ -1100,9 +1432,14 @@ function syncPortfolioChartPeriodControls() {
     button.disabled = state.portfolioChartLoading;
   });
   document.getElementById("portfolio-chart-retry").disabled = state.portfolioChartLoading;
+  document.getElementById("portfolio-technical-panel").hidden = isPriceLine;
+  document.getElementById("chart-oscillators").hidden = isPriceLine;
+  document.getElementById("portfolio-chart-window").setAttribute("aria-label", isPriceLine ? "分时采样历史窗口" : "分钟 K 线历史窗口");
+  window.StockChartTools?.syncMode();
 }
 
 function resetPortfolioChartMetrics() {
+  window.StockChartTools?.clear();
   document.getElementById("portfolio-chart-latest").textContent = "--";
   document.getElementById("portfolio-chart-change").textContent = "--";
   document.getElementById("portfolio-chart-change").className = "";
@@ -1123,8 +1460,9 @@ function setPortfolioChartStatus(message, type = "loading") {
 }
 
 function portfolioChartLoadingMessage(item = state.portfolioChartItem) {
+  if (item?.instrument_type === "CFD") return "正在载入分时采样…";
   if (item?.market === "FUND") return state.portfolioChartMode === "weekly" ? "正在载入周净值…" : "正在载入历史确认净值…";
-  if (state.portfolioChartMode === "intraday") return "正在载入 1 分钟 K 线…";
+  if (state.portfolioChartMode === "intraday") return `正在载入 ${PORTFOLIO_CHART_INTERVAL_LABELS[state.portfolioChartCandleInterval]} K 线…`;
   return state.portfolioChartMode === "weekly" ? "正在载入周 K 行情…" : "正在载入日 K 行情…";
 }
 
@@ -1187,19 +1525,23 @@ function syncPortfolioChartPolling() {
 
 function openPortfolioChart(item, mode = "daily") {
   const isFund = item.market === "FUND";
+  const isPriceLine = item.instrument_type === "CFD";
   const dialog = document.getElementById("portfolio-chart-dialog");
   state.portfolioChartRequestId += 1;
   state.portfolioChartLoading = false;
   window.clearInterval(state.portfolioChartPoller);
   state.portfolioChartPoller = null;
   state.portfolioChartItem = item;
-  state.portfolioChartMode = PORTFOLIO_CHART_CONFIG[mode] ? mode : "daily";
+  state.portfolioChartMode = isPriceLine ? "intraday" : PORTFOLIO_CHART_CONFIG[mode] ? mode : "daily";
+  if (isPriceLine) state.portfolioChartCandleInterval = "1m";
   state.portfolioChartPeriod = PORTFOLIO_CHART_CONFIG[state.portfolioChartMode].defaultPeriod;
   state.portfolioChartData = null;
   state.portfolioChartHoverIndex = null;
   state.portfolioChartWindowStart = null;
-  document.getElementById("portfolio-chart-market").textContent = item.market === "ASSET" ? "资产参考" : marketLabels[item.market] || item.market;
-  document.getElementById("portfolio-chart-kind").textContent = isFund ? "日净值" : PORTFOLIO_CHART_CONFIG[state.portfolioChartMode].label;
+  window.StockChartTools?.open(item);
+  document.getElementById("portfolio-chart-market").textContent = item.instrument_type === "INDEX" ? "指数" : item.instrument_type === "FUTURE" ? "期货" : item.instrument_type === "CFD" ? "CFD" : item.market === "ASSET" ? "资产参考" : marketLabels[item.market] || item.market;
+  document.getElementById("portfolio-chart-kind").textContent = isPriceLine ? "分时采样" : isFund ? "日净值" : state.portfolioChartMode === "intraday"
+    ? `${PORTFOLIO_CHART_INTERVAL_LABELS[state.portfolioChartCandleInterval]} K` : PORTFOLIO_CHART_CONFIG[state.portfolioChartMode].label;
   document.getElementById("portfolio-chart-title").textContent = item.name;
   briefAfterTitle("portfolio-chart-title", item);
   if (item.chartBrief) {
@@ -1208,7 +1550,7 @@ function openPortfolioChart(item, mode = "daily") {
     brief.removeAttribute("data-instrument-brief");
   }
   document.getElementById("portfolio-chart-symbol").textContent = item.symbol;
-  document.getElementById("portfolio-chart-price-label").textContent = isFund ? "最新确认净值" : state.portfolioChartMode === "intraday" ? "最新分钟收" : "最新收盘";
+  document.getElementById("portfolio-chart-price-label").textContent = isPriceLine ? "最新采样报价" : isFund ? "最新确认净值" : state.portfolioChartMode === "intraday" ? "最新分钟收" : "最新收盘";
   document.getElementById("portfolio-chart-note").textContent = item.chartBrief || (isFund
     ? "基金不提供盘中开高低收；这里展示历史确认单位净值，并非股票 K 线。"
     : "股票显示真实开、高、低、收与成交量。");
@@ -1217,7 +1559,7 @@ function openPortfolioChart(item, mode = "daily") {
     GOLD: "https://quote.eastmoney.com/unify/r/101.GC00Y", OIL: "https://quote.eastmoney.com/unify/r/102.CL00Y",
     US5Y: "https://quote.eastmoney.com/unify/r/171.US5Y", BTC: "https://www.coinbase.com/advanced-trade/spot/BTC-USD",
   };
-  source.href = item.market === "ASSET" ? sourceUrls[item.symbol] || "" : item.market === "FUND"
+  source.href = isPriceLine && item.symbol === "NQ.CFD" ? "https://finance.sina.com.cn/futures/quotes/NQ.shtml" : item.market === "ASSET" ? sourceUrls[item.symbol] || "" : item.market === "FUND"
     ? `https://fund.eastmoney.com/${encodeURIComponent(item.symbol)}.html`
     : `https://finance.yahoo.com/quote/${encodeURIComponent(item.symbol)}/chart/`;
   source.textContent = "查看原始行情 ↗";
@@ -1234,7 +1576,9 @@ function openPortfolioChart(item, mode = "daily") {
 async function loadPortfolioChart({ silent = false } = {}) {
   const item = state.portfolioChartItem;
   if (!item || (silent && state.portfolioChartLoading)) return;
-  const chartKey = `${item.market}:${item.symbol}:${state.portfolioChartMode}:${state.portfolioChartPeriod}`;
+  if (item.instrument_type === "CFD" && (state.portfolioChartMode !== "intraday" || state.portfolioChartPeriod !== "1d" || state.portfolioChartCandleInterval !== "1m")) return;
+  const chartKey = `${item.market}:${item.symbol}:${state.portfolioChartMode}:${state.portfolioChartPeriod}`
+    + (state.portfolioChartMode === "intraday" ? `:${state.portfolioChartCandleInterval}` : "");
   const keepExisting = Boolean(state.portfolioChartData && state.portfolioChartLoadedKey === chartKey);
   const requestId = ++state.portfolioChartRequestId;
   if (state.portfolioChartRetryKey === chartKey && Date.now() < state.portfolioChartRetryAt) {
@@ -1265,6 +1609,7 @@ async function loadPortfolioChart({ silent = false } = {}) {
   if (!keepExisting) setPortfolioChartStatus(portfolioChartLoadingMessage(item));
   try {
     const query = new URLSearchParams({ market: item.market, symbol: item.symbol, mode: state.portfolioChartMode, period: state.portfolioChartPeriod });
+    if (state.portfolioChartMode === "intraday") query.set("interval", state.portfolioChartCandleInterval);
     const data = await api(`/api/portfolio/chart?${query.toString()}`);
     if (requestId !== state.portfolioChartRequestId) return;
     state.portfolioChartData = data;
@@ -1272,6 +1617,7 @@ async function loadPortfolioChart({ silent = false } = {}) {
     state.portfolioChartRetryKey = null;
     state.portfolioChartRetryAt = 0;
     const stats = data.stats || {};
+    const isPriceLine = data.kind === "price_line";
     const displayItem = { ...item, currency: data.currency || item.currency };
     if (item.market === "ASSET") {
       briefAfterTitle("portfolio-chart-title", item);
@@ -1280,7 +1626,7 @@ async function loadPortfolioChart({ silent = false } = {}) {
       brief.removeAttribute("data-instrument-brief");
     }
     const latest = Number(stats.latest);
-    document.getElementById("portfolio-chart-price-label").textContent = isFund ? "最新净值" : data.mode === "intraday"
+    document.getElementById("portfolio-chart-price-label").textContent = isPriceLine ? "最新采样报价" : isFund ? "最新净值" : data.mode === "intraday"
       ? data.session_status === "closed" ? "休市前分钟收" : data.retained_from_cache ? "已保存的分钟收" : "最新分钟收"
       : data.retained_from_cache ? "已保存的收盘" : "最新收盘";
     const change = Number(stats.change_pct || 0);
@@ -1288,17 +1634,20 @@ async function loadPortfolioChart({ silent = false } = {}) {
     const changeNode = document.getElementById("portfolio-chart-change");
     changeNode.textContent = signedPercent(change);
     changeNode.className = change > 0 ? "positive" : change < 0 ? "negative" : "neutral";
+    changeNode.title = stats.baseline_label || "";
+    changeNode.setAttribute("aria-label", `${changeNode.textContent}${stats.baseline_label ? `，${stats.baseline_label}` : ""}`);
     document.getElementById("portfolio-chart-high").textContent = formatPortfolioChartValue(stats.high, displayItem);
     document.getElementById("portfolio-chart-low").textContent = formatPortfolioChartValue(stats.low, displayItem);
-    const pointsUnit = data.mode === "intraday" ? "根" : data.mode === "weekly" ? "个交易周" : "个交易日";
+    const pointsUnit = isPriceLine ? "个采样点" : data.mode === "intraday" ? "根" : data.mode === "weekly" ? "个交易周" : "个交易日";
     document.getElementById("portfolio-chart-points").textContent = `${Number(stats.points || 0)} ${pointsUnit}`;
-    const periodLabel = item.market === "ASSET" && item.symbol === "BTC" && data.mode === "intraday" ? "近 300 根" : PORTFOLIO_CHART_CONFIG[data.mode]?.periods?.[data.period] || "区间";
-    document.getElementById("portfolio-chart-interval").textContent = `${periodLabel} · ${PORTFOLIO_CHART_INTERVAL_LABELS[data.interval] || data.interval}`;
-    const kindLabel = isFund ? (data.mode === "weekly" ? "周净值" : "日净值") : PORTFOLIO_CHART_CONFIG[data.mode]?.label || "行情";
+    const periodLabel = item.market === "ASSET" && item.symbol === "BTC" && data.mode === "intraday" ? "近 300 分钟" : PORTFOLIO_CHART_CONFIG[data.mode]?.periods?.[data.period] || "区间";
+    document.getElementById("portfolio-chart-interval").textContent = isPriceLine ? "当日 · 分时采样" : `${periodLabel} · ${PORTFOLIO_CHART_INTERVAL_LABELS[data.interval] || data.interval}`;
+    const kindLabel = isPriceLine ? "分时采样" : isFund ? (data.mode === "weekly" ? "周净值" : "日净值")
+      : data.mode === "intraday" ? `${PORTFOLIO_CHART_INTERVAL_LABELS[data.interval] || data.interval} K` : PORTFOLIO_CHART_CONFIG[data.mode]?.label || "行情";
     document.getElementById("portfolio-chart-kind").textContent = (data.extended_hours ? `${kindLabel} · 含盘前盘后` : kindLabel)
       + (data.session_status === "closed" ? " · 休市" : data.retained_from_cache ? " · 历史快照" : "");
-    document.getElementById("portfolio-chart-high-label").textContent = "区间最高";
-    document.getElementById("portfolio-chart-low-label").textContent = "区间最低";
+    document.getElementById("portfolio-chart-high-label").textContent = isPriceLine ? "采样最高" : "区间最高";
+    document.getElementById("portfolio-chart-low-label").textContent = isPriceLine ? "采样最低" : "区间最低";
     const cutoff = portfolioChartCutoff(data);
     const asOf = cutoff ? ` 数据截至 ${cutoff}。` : "";
     document.getElementById("portfolio-chart-note").textContent = (data.note || "股票显示真实日线开、高、低、收与成交量。") + asOf;
@@ -1308,7 +1657,7 @@ async function loadPortfolioChart({ silent = false } = {}) {
     source.hidden = false;
     document.getElementById("portfolio-chart-canvas").setAttribute(
       "aria-label",
-      data.kind === "nav" ? `${item.name} 历史单位净值走势` : `${item.name} ${kindLabel}与成交量`,
+      data.kind === "nav" ? `${item.name} 历史单位净值走势` : isPriceLine ? `${item.name} 分时采样报价折线` : `${item.name} ${kindLabel}与成交量`,
     );
     renderPortfolioTechnicalAnalysis(data.technical);
     document.getElementById("portfolio-chart-status").hidden = true;
@@ -1364,7 +1713,7 @@ function portfolioChartDateLabel(entry, detailed = false) {
     if (timezone) options.timeZone = timezone;
     try {
       const label=new Intl.DateTimeFormat("zh-CN", options).format(new Date(Number(entry.timestamp) * 1000));
-      return detailed && entry.session ? `${label} · ${{pre:"盘前",regular:"常规",post:"盘后",unknown:"时段未确认"}[entry.session] || ""}` : label;
+      return detailed && entry.session ? `${label} · ${{pre:"盘前",regular:"常规",post:"盘后",reference:"公开参考",unknown:"时段未确认"}[entry.session] || ""}` : label;
     } catch (_) {
       return new Intl.DateTimeFormat("zh-CN", { ...options, timeZone: undefined }).format(new Date(Number(entry.timestamp) * 1000));
     }
@@ -1389,8 +1738,9 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
 
   const isNav = data.kind === "nav";
   const isIntraday = data.mode === "intraday";
-  const hasVolume = !isNav;
-  const isLineChart = isNav;
+  const isPriceLine = data.kind === "price_line";
+  const hasVolume = !isNav && !isPriceLine;
+  const isLineChart = isNav || isPriceLine;
   const left = width < 520 ? 64 : 78;
   const right = width - 16;
   const top = 29;
@@ -1413,8 +1763,8 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
   }
   const overlays = (data.technical?.overlays || []).map(overlay => ({...overlay, values:(overlay.values || []).slice(offset, offset + visibleCount)}));
   const overlayValues = overlays.flatMap((overlay) => overlay.values).filter((value) => value !== null && Number.isFinite(Number(value))).map(Number);
-  const rawHigh = Math.max(...entries.map((entry) => Number(isNav ? entry.nav : entry.high)), ...overlayValues);
-  const rawLow = Math.min(...entries.map((entry) => Number(isNav ? entry.nav : entry.low)), ...overlayValues);
+  const rawHigh = Math.max(...entries.map((entry) => Number(isNav ? entry.nav : isPriceLine ? entry.close : entry.high)), ...overlayValues);
+  const rawLow = Math.min(...entries.map((entry) => Number(isNav ? entry.nav : isPriceLine ? entry.close : entry.low)), ...overlayValues);
   const rawSpan = Math.max(rawHigh - rawLow, Math.abs(rawHigh) * 0.008, 0.0001);
   const high = rawHigh + rawSpan * 0.08;
   const low = Math.max(0, rawLow - rawSpan * 0.08);
@@ -1474,7 +1824,7 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
   }
 
   if (isLineChart) {
-    const lineColor = isNav ? "#27738d" : Number(data.stats?.change_pct || 0) >= 0 ? "#0c8a62" : "#c94b55";
+    const lineColor = isNav ? "#27738d" : Number(data.stats?.change_pct || 0) >= 0 ? "#b9384c" : "#167459";
     context.beginPath();
     entries.forEach((entry, index) => {
       const x = xAt(index);
@@ -1485,7 +1835,7 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
     context.lineTo(xAt(entries.length - 1), priceBottom);
     context.lineTo(xAt(0), priceBottom);
     context.closePath();
-    context.fillStyle = isNav ? "rgba(39, 115, 141, .10)" : Number(data.stats?.change_pct || 0) >= 0 ? "rgba(12, 138, 98, .08)" : "rgba(201, 75, 85, .08)";
+    context.fillStyle = isNav ? "rgba(39, 115, 141, .10)" : Number(data.stats?.change_pct || 0) >= 0 ? "rgba(185, 56, 76, .08)" : "rgba(22, 116, 89, .08)";
     context.fill();
     context.beginPath();
     entries.forEach((entry, index) => {
@@ -1505,7 +1855,7 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
       const x = xAt(index);
       const open = Number(entry.open);
       const close = Number(entry.close);
-      const color = close >= open ? "#0c8a62" : "#c94b55";
+      const color = close >= open ? "#b9384c" : "#167459";
       context.strokeStyle = color;
       context.fillStyle = color;
       context.lineWidth = 1;
@@ -1530,7 +1880,7 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
     context.stroke();
     entries.forEach((entry, index) => {
       const x = xAt(index);
-      const color = Number(entry.close) >= Number(entry.open) ? "#0c8a62" : "#c94b55";
+      const color = Number(entry.close) >= Number(entry.open) ? "#b9384c" : "#167459";
       const volumeHeight = (Number(entry.volume || 0) / maxVolume) * Math.max(1, volumeBottom - volumeTop);
       context.globalAlpha = 0.34;
       context.fillStyle = color;
@@ -1579,7 +1929,7 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
     context.restore();
     context.beginPath();
     context.arc(x, y, 3.5, 0, Math.PI * 2);
-    context.fillStyle = isNav ? "#27738d" : Number(entry.close) >= Number(entry.open) ? "#0c8a62" : "#c94b55";
+    context.fillStyle = isNav ? "#27738d" : (isPriceLine ? Number(data.stats?.change_pct || 0) >= 0 : Number(entry.close) >= Number(entry.open)) ? "#b9384c" : "#167459";
     context.fill();
     context.strokeStyle = "#ffffff";
     context.lineWidth = 1.5;
@@ -1587,6 +1937,7 @@ function drawPortfolioChart(canvas, data, hoverIndex = null) {
   }
 
   canvas._portfolioChartGeometry = { data, entries, offset, left, right, top, bottom, xAt };
+  if (!isPriceLine) window.StockChartTools?.draw(canvas, data, hoverIndex);
 }
 
 function updatePortfolioChartTooltip(event) {
@@ -1617,12 +1968,15 @@ function updatePortfolioChartTooltip(event) {
       el("span", "", `单位净值 ${formatPortfolioChartValue(entry.nav, state.portfolioChartItem)}`),
       el("span", scoreClass(entry.change_pct), `当日 ${entry.change_pct === null ? "--" : signedPercent(entry.change_pct)}`),
     );
+  } else if (geometry.data.kind === "price_line") {
+    tooltip.append(el("span", "", `采样报价 ${formatPortfolioChartValue(entry.close, state.portfolioChartItem)}`));
   } else {
     tooltip.append(
       el("span", "", `开 ${formatPortfolioChartValue(entry.open, state.portfolioChartItem)}  高 ${formatPortfolioChartValue(entry.high, state.portfolioChartItem)}`),
       el("span", "", `低 ${formatPortfolioChartValue(entry.low, state.portfolioChartItem)}  收 ${formatPortfolioChartValue(entry.close, state.portfolioChartItem)}`),
       el("span", "", `成交量 ${formatChartVolume(entry.volume)}`),
     );
+    if (entry.partial) tooltip.append(el("span", "", `不完整周期 · 已有 ${entry.source_points} 根1分钟K线`));
   }
   const overlayText = (geometry.data.technical?.overlays || []).map((overlay) => {
     const value = overlay.values?.[index + geometry.offset];
@@ -2093,16 +2447,7 @@ function renderKoreaStockNews(definition, newsItems) {
   container.append(fragment);
 }
 
-function renderKoreaStockOutlook(definition, outlook) {
-  const container = document.getElementById(`kr-stock-outlook-${definition.id}`);
-  container.replaceChildren();
-  if (!outlook || typeof outlook !== "object") {
-    container.append(emptyState("暂无可用预测", "请先触发一次标的扫描"));
-    return;
-  }
-
-  const summary = outlook.summary || {};
-  const forecast = outlook.forecast || {};
+function renderOutlookSummary(summary, keyEvents) {
   const summarySection = el("article", "asset-outlook-section");
   const summaryHeader = el("div", "asset-outlook-header");
   const summaryTitle = el("div", "asset-outlook-title");
@@ -2121,8 +2466,7 @@ function renderKoreaStockOutlook(definition, outlook) {
   summarySection.append(summaryMetrics);
 
   const events = el("div", "asset-outlook-events");
-  (summary.key_events || []).forEach((event) => {
-    if (!event.url) return;
+  keyEvents.forEach((event) => {
     const link = el("a", "asset-outlook-event", `${newsTitle(event)} ↗`);
     appendNewsTranslation(link, event);
     link.href = String(event.url);
@@ -2132,6 +2476,20 @@ function renderKoreaStockOutlook(definition, outlook) {
     events.append(link);
   });
   summarySection.append(events);
+  return summarySection;
+}
+
+function renderKoreaStockOutlook(definition, outlook) {
+  const container = document.getElementById(`kr-stock-outlook-${definition.id}`);
+  container.replaceChildren();
+  if (!outlook || typeof outlook !== "object") {
+    container.append(emptyState("暂无可用预测", "请先触发一次标的扫描"));
+    return;
+  }
+
+  const summary = outlook.summary || {};
+  const forecast = outlook.forecast || {};
+  const summarySection = renderOutlookSummary(summary, (summary.key_events || []).filter(event => event.url));
 
   const forecastSection = el("article", "asset-outlook-section");
   const forecastHeader = el("div", "asset-outlook-header");
@@ -2242,42 +2600,27 @@ function renderAdrPremium(premium) {
 function renderRuntime(data) {
   const runtime = data.runtime || {};
   const lastRun = runtime.last_run;
-  const dot = document.getElementById("runtime-indicator");
   const sideDot = document.getElementById("sidebar-status-dot");
-  dot.className = "runtime-indicator";
   sideDot.className = "status-dot";
   if (data._startup_cache) {
-    dot.classList.add("warning");
     sideDot.classList.add("warning");
-    document.getElementById("runtime-title").textContent = "上次监测快照";
-    document.getElementById("runtime-copy").textContent = "后台正在确认当前运行状态";
     document.getElementById("sidebar-status").textContent = "已恢复快照";
     document.getElementById("sidebar-status-detail").textContent = "等待本次同步";
   } else if (runtime.scan_in_progress || runtime.movement_scan_in_progress) {
-    dot.classList.add("running");
     sideDot.classList.add("running");
-    document.getElementById("runtime-title").textContent = "正在检测";
-    document.getElementById("runtime-copy").textContent = runtime.movement_scan_in_progress
-      ? "正在检测全部持仓股与韩国核心股异动，并匹配公开消息"
-      : "正在收集并分析最新消息";
     document.getElementById("sidebar-status").textContent = "检测进行中";
     document.getElementById("sidebar-status-detail").textContent = "请稍候";
   } else if ((lastRun && lastRun.errors && lastRun.errors.length) || (runtime.last_movement_run?.errors || []).length) {
     const errors = [...(lastRun?.errors || []), ...(runtime.last_movement_run?.errors || [])];
-    dot.classList.add("warning");
     sideDot.classList.add("warning");
-    document.getElementById("runtime-title").textContent = "检测完成，有警告";
-    document.getElementById("runtime-copy").textContent = `${errors.length} 项来源异常，已保留有效数据；详情见数据状态。`;
     document.getElementById("sidebar-status").textContent = "数据源警告";
     document.getElementById("sidebar-status-detail").textContent = `${errors.length} 项`;
   } else if (lastRun) {
-    document.getElementById("runtime-title").textContent = "最近检测正常";
-    document.getElementById("runtime-copy").textContent = `抓取 ${lastRun.fetched} · 新增 ${lastRun.inserted} · 告警 ${lastRun.alert_count}`;
     document.getElementById("sidebar-status").textContent = "系统正常";
     document.getElementById("sidebar-status-detail").textContent = formatDate(lastRun.finished_at, true);
   } else {
-    document.getElementById("runtime-title").textContent = "监测器就绪";
-    document.getElementById("runtime-copy").textContent = "等待第一次检测";
+    document.getElementById("sidebar-status").textContent = "系统就绪";
+    document.getElementById("sidebar-status-detail").textContent = "等待检测";
   }
   updateScanButton(Boolean(runtime.scan_in_progress));
   updateMovementButton(Boolean(runtime.movement_scan_in_progress));
@@ -2368,20 +2711,19 @@ function renderMovementTable(items) {
   }
   const fragment = document.createDocumentFragment();
   items.forEach((item) => {
-    const isHongKong = item.market === "HK";
-    const primaryLabel = isHongKong ? String(item.name || "").trim() || item.symbol : item.symbol;
+    const primaryLabel = instrumentName(item);
     const row = el("article", "movement-row");
-    row.tabIndex = 0;
-    row.setAttribute("role", "button");
-    row.setAttribute("aria-label", isHongKong ? `查看 ${primaryLabel}（${item.symbol}）异动原因` : `查看 ${item.symbol} 异动原因`);
 
     const asset = el("div", "movement-asset");
     const assetTop = el("div");
-    const primary = el("strong", isHongKong ? "movement-symbol movement-company-name" : "movement-symbol", primaryLabel);
+    const primary = el("button", "movement-symbol movement-company-name", primaryLabel);
+    primary.type = "button";
+    primary.setAttribute("aria-label", `查看 ${primaryLabel}（${item.symbol}）异动详情`);
+    primary.addEventListener("click", event => { event.stopPropagation(); openMovementDetail(item); });
     primary.title = primaryLabel;
     assetTop.append(primary);
     const metadata = el("div", "movement-meta");
-    const secondary = el("span", "movement-name", isHongKong ? item.symbol : item.name);
+    const secondary = el("span", "movement-name", item.symbol);
     secondary.title = secondary.textContent;
     metadata.append(
       secondary,
@@ -2407,24 +2749,23 @@ function renderMovementTable(items) {
 
     const cause = el("div", "movement-cause");
     const causeTop = el("div");
+    const explanation = movementExplanation(item);
     causeTop.append(
-      el("span", `cause-category ${item.reason_category === "unconfirmed" ? "unconfirmed" : ""}`, eventLabels[item.reason_category] || "公开消息"),
-      el("span", `confidence-badge confidence-${confidenceClass(item.confidence)}`, item.live_extended ? "原因待确认" : `${confidenceLabel(item.confidence)} ${Math.round(Number(item.confidence || 0) * 100)}%`),
+      el("span", "cause-category unconfirmed", explanation.ready ? eventLabels[item.reason_category] || "公开消息" : "行情事实"),
+      el("span", "confidence-badge", explanation.label),
     );
     if (Number(item.trump_factor?.post_count || 0) > 0) {
       const badge = trumpBadge(item.trump_factor);
       badge.title = item.trump_factor.reason || "Trump 动态因子";
       causeTop.append(badge);
     }
-    cause.append(causeTop, el("p", "", item.reason_summary));
+    cause.append(causeTop);
+    appendMovementExplanation(cause,item);
 
     const price=el("div","movement-price");price.append(el("strong","",formatPrice(item.price)));
     if(item.quote_time)price.append(el("small","",formatDate(item.quote_time,true)));
     row.append(asset, price, change, relative, intensity, cause);
     row.addEventListener("click", () => openMovementDetail(item));
-    row.addEventListener("keydown", (eventKey) => {
-      if (eventKey.key === "Enter" || eventKey.key === " ") openMovementDetail(item);
-    });
     fragment.append(row);
   });
   container.append(fragment);
@@ -2490,7 +2831,7 @@ function renderAssets(data) {
   updateAssetRefreshButton(updating);
   renderAssetPriceCards(data.assets || [], runtime);
   renderProbabilityTable(data.probabilities || []);
-  renderOverviewFreshness();
+  renderFreshnessStatus();
   renderAssetOutlooks(data.outlooks || []);
   renderAssetNewsColumns(data.news || []);
 }
@@ -2509,20 +2850,27 @@ function renderAssetPriceCards(items, runtime = {}) {
     const card = el("article", `asset-price-card asset-${item.key.toLowerCase()}`);
     const header = el("div", "asset-card-header");
     const identity = el("div", "asset-identity");
-    identity.append(el("span", "asset-key", item.key === "OIL" ? "WTI" : item.key === "US5Y" ? "US 5Y" : item.key), el("strong", "", item.name), el("small", "", `${item.subtitle} · ${item.symbol}`));
-    identity.append(instrumentBriefNode({asset:item.key}));
+    const chartContexts = {
+      GOLD: ["黄金期货 · COMEX", "COMEX 黄金期货参考 K 线，不是上方的 XAU/USD 现货报价。"],
+      BTC: ["Bitcoin · BTC/USD", "BTC/USD 现货；分钟 K 来自 Coinbase，日 / 周 K 来自 Yahoo 公开参考。"],
+      OIL: ["WTI 原油期货", "WTI 连续期货参考 K 线，具体交割月份以来源为准。"],
+      US5Y: ["五年期美债收益率", "Cboe 五年期收益率指标，单位 %；不是债券价格。"],
+    };
+    const chartContext = chartContexts[item.key];
+    const nameRow = el("div", "asset-name-row");
+    nameRow.append(el("strong", "", item.name));
+    if (chartContext) nameRow.append(minuteChartButton({market:"ASSET", symbol:item.key, name:chartContext[0], currency:item.key === "US5Y" ? "%" : "USD", chartBrief:chartContext[1]}));
+    identity.append(nameRow, el("small", "", [item.subtitle, item.symbol].filter(Boolean).join(" · ")));
     const quoteAgeLimit = ["OIL", "US5Y"].includes(item.key) ? 1800 : 180;
-    const quoteState = item.quote_status === "closed" ? "休市 / 延迟报价 ↗" : item.quote_status === "stale" || Number(item.age_seconds || 0) > quoteAgeLimit
-      ? "上一有效报价 ↗"
-      : item.delayed ? "延迟报价 ↗" : item.key === "GOLD" ? "即时现货 ↗" : "实时成交 ↗";
-    const source = el("a", "asset-source-link", quoteState);
+    const quoteState = item.quote_status === "closed" ? "休市" : item.quote_status === "stale" || Number(item.age_seconds || 0) > quoteAgeLimit
+      ? "上次报价" : item.delayed ? "延迟" : "";
+    const source = el("a", "asset-quote-time", formatDate(item.price_time, true));
     source.href = item.source_url;
     source.target = "_blank";
     source.rel = "noopener noreferrer";
-    source.title = item.key === "GOLD"
-      ? `打开 ${item.source}；XAU/USD 为即时现货，技术走势图使用 COMEX 分钟线校准`
-      : `打开 ${item.source}`;
-    header.append(identity, source);
+    source.title = [item.source, item.contract_name, item.quote_note].filter(Boolean).join(" · ");
+    source.setAttribute("aria-label", `${item.name}报价来源 · ${formatDate(item.price_time, true)}`);
+    header.append(identity);
 
     const quote = el("div", "asset-quote-row");
     const price = el("div", "asset-current-price");
@@ -2544,20 +2892,11 @@ function renderAssetPriceCards(items, runtime = {}) {
     metrics.append(
       assetMetric("24h 高点", formatAssetPrice({ ...item, price: item.high_24h })),
       assetMetric("24h 低点", formatAssetPrice({ ...item, price: item.low_24h })),
-      assetMetric("报价时间", formatDate(item.price_time, true)),
     );
-    const chartContexts = {
-      GOLD: ["黄金期货 · COMEX", "COMEX 黄金期货参考 K 线，不是上方的 XAU/USD 现货报价。"],
-      BTC: ["Bitcoin · BTC/USD", "BTC/USD 现货；分钟 K 来自 Coinbase，日 / 周 K 来自 Yahoo 公开参考。"],
-      OIL: ["WTI 原油期货", "WTI 连续期货参考 K 线，具体交割月份以来源为准。"],
-      US5Y: ["五年期美债收益率", "Cboe 五年期收益率指标，单位 %；不是债券价格。"],
-    };
-    const chartContext = chartContexts[item.key];
+    const timing = el("div", "asset-quote-timing");
+    timing.append(el("span", "", quoteState ? `报价时间 · ${quoteState}` : "报价时间"), source);
+    metrics.append(timing);
     card.append(header, quote, canvas, metrics);
-    if (chartContext) card.append(minuteChartButton({market:"ASSET", symbol:item.key, name:chartContext[0], currency:item.key === "US5Y" ? "%" : "USD", chartBrief:chartContext[1]}));
-    if (item.quote_note) {
-      card.append(el("p", "asset-quote-note", `${item.contract_name || ""} · ${item.quote_note}`));
-    }
     container.append(card);
     window.requestAnimationFrame(() => drawAssetSparkline(canvas, item.chart || [], Number(item.change_24h) >= 0));
   });
@@ -2572,9 +2911,10 @@ function renderAssetPriceCards(items, runtime = {}) {
 
 function minuteChartButton(item) {
   const button = el("button", "asset-chart-button");
-  button.append(uiIcon("chart-no-axes-combined"), el("span", "", "查看分钟 K"));
+  button.append(uiIcon("chart-no-axes-combined"), el("span", "", "分时图"));
   button.type = "button";
-  button.title = `${item.name || item.shortName} · 1 分钟 K 线`;
+  button.title = `${item.name || item.shortName} · ${item.instrument_type === "CFD" ? "分时采样" : "1 分钟 K 线"}`;
+  button.setAttribute("aria-label", `${item.name || item.shortName}分时图`);
   button.addEventListener("click", () => openPortfolioChart({...item, name:item.name || item.shortName}, "intraday"));
   return button;
 }
@@ -2601,7 +2941,7 @@ function drawAssetSparkline(canvas, points, positive) {
   context.moveTo(padding, canvas.height - padding);
   context.lineTo(canvas.width - padding, canvas.height - padding);
   context.stroke();
-  context.strokeStyle = positive ? "#0c8a62" : "#c94b55";
+  context.strokeStyle = positive ? "#b9384c" : "#167459";
   context.lineWidth = 3;
   context.lineJoin = "round";
   context.beginPath();
@@ -2678,32 +3018,7 @@ function renderAssetOutlooks(items) {
     const summary = item.news_summary || {};
     const forecast = item.forecast || {};
 
-    const summarySection = el("article", "asset-outlook-section");
-    const summaryHeader = el("div", "asset-outlook-header");
-    const summaryTitle = el("div", "asset-outlook-title");
-    summaryTitle.append(el("span", "", "LAST 24H"), el("strong", "", "过去24小时新闻总结"));
-    const toneClass = summary.tone === "偏多" ? "positive" : summary.tone === "偏空" ? "negative" : "neutral";
-    summaryHeader.append(summaryTitle, el("span", `asset-outlook-state ${toneClass}`, summary.tone || "中性"));
-    summarySection.append(summaryHeader, el("p", "asset-outlook-text", summary.text || "正在汇总过去24小时消息"));
-    const summaryMetrics = el("div", "asset-outlook-metrics");
-    summaryMetrics.append(
-      el("span", "", `${Number(summary.story_count || 0)} 条消息`),
-      el("span", "positive", `利多 ${Number(summary.bullish_count || 0)}`),
-      el("span", "negative", `利空 ${Number(summary.bearish_count || 0)}`),
-      el("span", "", `${Number(summary.channel_count || 0)} 渠道`),
-    );
-    summarySection.append(summaryMetrics);
-    const events = el("div", "asset-outlook-events");
-    (summary.key_events || []).slice(0, 2).forEach((event) => {
-      const link = el("a", "asset-outlook-event", `${newsTitle(event)} ↗`);
-      appendNewsTranslation(link, event);
-      link.href = event.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.title = `打开 ${event.source || "新闻来源"} 原文`;
-      events.append(link);
-    });
-    summarySection.append(events);
+    const summarySection = renderOutlookSummary(summary, (summary.key_events || []).slice(0, 2));
 
     const forecastSection = el("article", "asset-outlook-section");
     const forecastHeader = el("div", "asset-outlook-header");
@@ -2959,16 +3274,49 @@ function pollTrumpStatus() {
   window.clearInterval(state.trumpPoller);
   state.trumpPoller = window.setInterval(async () => {
     try {
-      const data = await api("/api/dashboard");
-      renderDashboard(data);
+      const data = await api("/api/runtime");
+      renderRuntime(data);
       if (!data.trump?.runtime?.refresh_in_progress) {
         window.clearInterval(state.trumpPoller);
         state.trumpPoller = null;
+        await refreshDashboard({silent:true});
         const runtime = data.trump?.runtime || {};
         showToast(runtime.connected ? "Trump 动态已同步" : runtime.message || "X API 未连接", runtime.connected ? "success" : "error");
       }
     } catch (_) { /* regular refresh will recover */ }
   }, 1000);
+}
+
+let analysisCredentialPending = false;
+function renderAnalysisCredential(status) {
+  const label = document.getElementById("analysis-key-status");
+  if (!label) return;
+  const environment = status?.source === "environment";
+  label.textContent = status?.error || (environment ? "使用环境变量 · 在启动环境中管理" : status?.configured ? "本机密钥已保存 · 尚不代表连接成功" : "未配置 · 完整叙事需模型接口");
+  for (const id of ["analysis-key-input", "analysis-key-save", "analysis-key-clear"]) {
+    document.getElementById(id).disabled = analysisCredentialPending || environment;
+  }
+}
+
+async function saveAnalysisCredential(clear = false) {
+  if (analysisCredentialPending) return;
+  const input = document.getElementById("analysis-key-input"), apiKey = input.value.trim();
+  if (!clear && !apiKey) { showToast("请先在本机填写 OpenAI API Key", "error"); return; }
+  input.value = "";
+  analysisCredentialPending = true;
+  renderAnalysisCredential(state.dashboard?.settings?.api_credential);
+  try {
+    const status = await api("/api/analysis/credential", {method: "POST", body: clear ? {clear:true} : {api_key:apiKey}});
+    if (state.dashboard?.settings) state.dashboard.settings.api_credential = status;
+    showToast(clear ? "本机密钥已清除" : "密钥已加密保存；自动或模型模式将在生成报告时连接", "success");
+    await refreshDashboard({silent:true});
+  } catch (error) {
+    showToast(error.message || "密钥保存失败，请重试", "error");
+  } finally {
+    analysisCredentialPending = false;
+    input.value = "";
+    renderAnalysisCredential(state.dashboard?.settings?.api_credential);
+  }
 }
 
 async function saveXToken() {
@@ -3024,19 +3372,24 @@ function renderSettings(data) {
     button.classList.toggle("active", button.dataset.value === state.analysisMode);
   });
   }
-  const engine = settings.api_key_configured ? `${settings.model} 可用` : "未配置 API Key · 本地规则可用";
-  document.getElementById("model-status").textContent = engine;
-  document.getElementById("analysis-engine-caption").textContent = engine;
+  const engine = settings.api_key_configured ? `${settings.model} 凭据已配置，实际引擎以分析记录为准` : "未配置远程模型，本地规则可用。";
+  document.getElementById("model-status").textContent = "监测与研究配置";
+  document.getElementById("model-status").title = engine;
+  document.getElementById("analysis-engine-caption").textContent = settings.api_key_configured ? "远程模型已配置" : "本地规则可用";
+  document.getElementById("analysis-engine-caption").title = engine;
   const translation = data.translation || {};
-  document.getElementById("translation-status").textContent = translation.error || `${translation.state || "等待"} · 待处理 ${translation.pending || 0} · 原文保留`;
+  document.getElementById("translation-status").textContent = translation.error ? "部分译文待检查" : `待处理 ${translation.pending || 0} · 保留原文`;
+  document.getElementById("translation-status").title = translation.error || `${translation.state || "等待"}；机器翻译不参与情绪计算`;
   const xRuntime = data.trump?.runtime || {};
-  document.getElementById("x-token-status").textContent = xRuntime.configured
+  document.getElementById("x-token-status").title = xRuntime.configured
     ? `${xRuntime.message || "已配置"}${xRuntime.credential_source === "environment" ? " · 环境变量" : " · Windows 加密存储"}`
     : "尚未配置 X API";
+  document.getElementById("x-token-status").textContent = xRuntime.configured ? "接口已配置" : "未配置 · 不影响公开资讯";
   if (!state.settingsReady) {
-    document.querySelectorAll("#settings-form input, #settings-form button").forEach(control=>{control.disabled=false;});
+    document.querySelectorAll("#settings-form input, #settings-form select, #analysis-mode-control button, #settings-save, #x-token-save-button, #x-token-clear-button, #analysis-key-save, #analysis-key-clear").forEach(control=>{control.disabled=false;});
     state.settingsReady=true;
   }
+  renderAnalysisCredential(settings.api_credential);
 }
 
 async function refreshFeatureHealth() {
@@ -3050,16 +3403,31 @@ async function refreshFeatureHealth() {
 }
 
 function renderFeatureHealth(result) {
-  const labels = {running:"已启用",ready:"已配置",disabled:"已关闭",blocked:"待授权",empty:"待录入持仓",error:"需要检查"};
+  const labels = {disabled:"已关闭",blocked:"待配置",empty:"待录入",error:"需检查",waiting:"待更新"};
+  const names = {earnings:"财报预告",news:"新闻与事件",translation:"中文翻译",fundamentals:"公司财报",movements:"市场异动",portfolio:"持仓行情",social:"公开社交",trump:"Trump 政策",model:"远程新闻模型",forward:"前向记录",notifications:"系统提醒"};
   const container = document.getElementById("feature-health");
+  const visibleFeatures = result.features.filter(feature => !["running","ready"].includes(feature.state));
+  const signature = JSON.stringify(visibleFeatures);
+  document.getElementById("feature-health-status").textContent = `检查于 ${formatDate(result.checked_at, true)} · ${visibleFeatures.length ? `${visibleFeatures.length} 项状态提醒` : "暂无待处理状态"}`;
+  if (container.dataset.signature === signature) return;
+  const focusedId = container.contains(document.activeElement) ? document.activeElement.dataset.featureId : null;
+  container.dataset.signature = signature;
   container.replaceChildren();
-  for (const feature of result.features) {
-    const row = el("div", "field-row"), text = el("span");
-    text.append(el("strong", "", feature.name), el("small", "", feature.detail));
-    row.append(text, el("span", feature.state === "error" || feature.state === "blocked" ? "negative" : "quiet-note", labels[feature.state] || feature.state));
+  for (const feature of visibleFeatures) {
+    const label = labels[feature.state] || "待确认", row = el("button", "settings-health-row");
+    row.type = "button"; row.dataset.featureId = feature.id; row.dataset.state = feature.state;
+    row.title = `${feature.name}：${label}；查看详情`;
+    row.append(el("strong", "", names[feature.id] || feature.name), el("span", "", label), uiIcon("arrow-right"));
+    row.addEventListener("click",()=>{
+      document.getElementById("settings-feature-title").textContent = feature.name;
+      document.getElementById("settings-feature-state").textContent = label;
+      document.getElementById("settings-feature-detail").textContent = feature.detail;
+      document.getElementById("settings-feature-dialog").showModal();
+    });
     container.append(row);
+    if (focusedId === feature.id) row.focus({preventScroll:true});
   }
-  document.getElementById("feature-health-status").textContent = `检查于 ${formatDate(result.checked_at, true)} · ${result.blocked.length} 项仍需授权`;
+  if (focusedId && !visibleFeatures.some(feature => feature.id === focusedId)) document.getElementById("settings-health-refresh").focus({preventScroll:true});
 }
 
 function renderManualWatchlist(data) {
@@ -3084,10 +3452,60 @@ function renderConnection(error = null) {
     : typeof startupMemory !== "undefined" && startupMemory.previewAt
       ? `已恢复上次快照 ${formatDate(startupMemory.previewAt, true)} · 正在后台更新`
     : `本地服务已连接 · 总览同步于 ${formatDate(new Date().toISOString(), true)}`;
+  if (typeof startupMemory !== "undefined" && startupMemory.storageError) {
+    document.getElementById("connection-message").textContent += ` · ${startupMemory.storageError}`;
+  }
+  document.getElementById("connection-message").title = document.getElementById("connection-message").textContent;
   document.getElementById("connection-retry").hidden = !error;
+  strip.hidden = !error && !startupMemory.previewAt && !startupMemory.storageError;
+}
+
+const dashboardViewSignatures = new Map();
+function renderDashboardView(data = state.dashboard, {force = false} = {}) {
+  if (!data || (data.portfolio?.id || "default") !== portfolioContext.id) return;
+  const view = state.currentView;
+  const combinedAlerts = () => [...(data.alerts || []), ...(data.portfolio_risk_events || data.portfolio?.risk?.events || []).map(item => ({...item, is_portfolio_risk:true}))]
+    .sort((a, b) => (Date.parse(b.created_at || b.alert_created_at) || 0) - (Date.parse(a.created_at || a.alert_created_at) || 0));
+  const movement = [data.movements, data.movement_stats, data.movement_scope, data.extended_monitor, data.runtime?.last_movement_run];
+  const inputs = {
+    overview: [data.stats, data.portfolio, data.portfolios, currentNews(), data.alerts, data.portfolio_risk_events, data.sentiment_by_symbol, data.watchlist, data.trump, data.runtime, data.freshness, data.news_refresh, state.liveNews?.runtime, state.liveNews?.news_refresh],
+    portfolio: [data.portfolio, data.portfolios, data.watchlist, data.settings],
+    settings: [data.settings, data.runtime?.auto_enabled, data.translation, data.trump?.runtime],
+    watchlist: [data.watchlist, data.stock_whitelist, data.sentiment_by_symbol, data.portfolio],
+    feed: [currentNews(), data.watchlist],
+    alerts: [data.alerts, data.portfolio_risk_events, data.portfolio?.risk?.events],
+    movements: movement,
+    signals: [currentNews(), data.alerts, data.portfolio_risk_events, data.portfolio, data.sentiment_by_symbol, data.watchlist, data.trump, ...movement],
+    "korea-stocks": [data.korea_quotes, data.news, data.portfolio, data.sentiment_by_symbol, data.watchlist],
+    social: data.trump,
+    research: data.settings,
+  };
+  if (!(view in inputs)) return;
+  // Generation time alone is not a content change; quote/source timestamps remain part of the signature.
+  const signature = JSON.stringify([portfolioContext.id, data._startup_cache, inputs[view]], (key, value) => key === "generated_at" ? undefined : value);
+  if (!force && dashboardViewSignatures.get(view) === signature) return;
+  if (view === "overview") {
+    renderOverview(); renderAlerts(document.getElementById("overview-alerts"), combinedAlerts(), {limit:4});
+    renderPulse(data);
+  } else if (view === "portfolio") {
+    renderPortfolio(data); window.PortfolioBooks?.render(data);
+  } else if (view === "settings") renderSettings(data);
+  else if (view === "watchlist") renderWatchlist(data);
+  else if (view === "feed") applyNewsFilters();
+  else if (view === "alerts") {
+    const alerts = combinedAlerts();
+    renderAlerts(document.getElementById("all-alerts"), alerts, {table:true});
+    document.getElementById("alert-summary").textContent = `${alerts.length} 条告警记录`;
+  } else if (view === "movements") renderMovements(data);
+  else if (view === "signals" && typeof renderEventCenter === "function") renderEventCenter();
+  else if (view === "korea-stocks") renderKoreaStocks(data);
+  else if (view === "social") renderTrump(data);
+  else if (view === "research" && typeof updateResearchSourceSites === "function") updateResearchSourceSites();
+  dashboardViewSignatures.set(view, signature);
 }
 
 function renderDashboard(data) {
+  if ((data.portfolio?.id || "default") !== portfolioContext.id) return;
   if (state.dashboard === data) return;
   state.dashboard = data;
   const stats = data.stats;
@@ -3097,31 +3515,28 @@ function renderDashboard(data) {
   autoToggle.checked = Boolean(data.runtime.auto_enabled);
   document.getElementById("auto-caption").textContent = data.runtime.auto_enabled ? `每轮后等待 ${data.settings.poll_interval_seconds || data.settings.poll_interval_minutes * 60} 秒` : "已关闭";
 
-  renderOverview();
-  renderAlerts(document.getElementById("overview-alerts"), data.alerts || [], { limit: 4 });
-  renderAlerts(document.getElementById("all-alerts"), data.alerts || [], { table: true });
-  document.getElementById("alert-summary").textContent = `${(data.alerts || []).length} 条告警记录`;
-  renderPulse(data);
-  renderWatchlist(data);
-  renderPortfolio(data);
-  renderSettings(data);
-  renderTrump(data);
-  renderManualWatchlist(data);
-  renderKoreaStocks(data);
   renderRuntime(data);
-  renderMovements(data);
-  applyNewsFilters();
-  if (typeof renderEventCenter === "function") renderEventCenter();
-  if (typeof updateResearchSourceSites === "function") updateResearchSourceSites();
+  renderDashboardView(data);
 }
 
 async function refreshDashboard({ silent = false } = {}) {
   try {
-    const data = await api("/api/dashboard");
+    const localPortfolio = state.currentView === 'portfolio' && state.dashboard && !state.dashboard._startup_cache;
+    let data;
+    if (localPortfolio) {
+      try {
+        const patch = await api('/api/portfolio/snapshot');
+        data = {...state.dashboard, ...patch};
+      } catch (error) {
+        if (error.status !== 404) throw error;
+        data = await api('/api/dashboard?details=0');
+      }
+    } else data = await api("/api/dashboard?details=0");
     renderDashboard(data);
     renderConnection();
     return data;
   } catch (error) {
+    if (error.status === 400 && window.PortfolioBooks) return window.PortfolioBooks.recoverMissing();
     renderConnection(error);
     if (!silent) showToast(error.message, "error");
   }
@@ -3150,32 +3565,13 @@ function overviewEvents(items, positions) {
 
 function renderOverview() {
   if(!state.dashboard)return;
+  window.Briefings?.refresh();
   const positions=state.dashboard.portfolio?.positions || [];
   const events=overviewEvents(currentNews(),positions);
   renderNews(document.getElementById("overview-news"),events.priority,{limit:8});
-  renderNews(document.getElementById("holdings-events"),events.holdings,{limit:2,
-    emptyTitle:positions.length ? "暂无持仓相关事件" : "尚未录入持仓",
-    emptyCopy:positions.length ? "当前新闻窗口内没有匹配记录" : "当前组合为空"});
-  renderOverviewFreshness();
-  if (typeof renderCompass === "function") renderCompass();
-  if (typeof renderEventCenter === "function") renderEventCenter();
-}
-
-function renderOverviewFreshness() {
-  if(!state.dashboard)return;
-  if (typeof renderFreshnessStatus === "function") { renderFreshnessStatus(); return; }
-  const container=document.getElementById("overview-freshness"), fresh=state.dashboard.freshness || {},rows=state.liveNews?.news || [];
-  const latest=(key,fallback)=>[fallback,...rows.map(row=>row[key])].filter(Boolean).sort().at(-1);
-  const published=latest("published_at",fresh.news_published_at),collected=latest("discovered_at",fresh.news_collected_at),analyzed=latest("analyzed_at",fresh.news_analyzed_at);
-  const runtime=state.liveNews?.runtime || state.dashboard.runtime || {},run=runtime.last_run;
-  const quoteStates={live:"有效报价",delayed:"延迟",closed:"休市",stale:"陈旧报价"};
-  const priceCopy=(state.assets?.assets || []).map(item=>`${ASSET_NAMES[item.key]} ${formatDate(item.price_time,true)} · ${quoteStates[item.quote_status] || "状态未注明"}`).join("；") || "报价尚未就绪";
-  const portfolio=state.dashboard.portfolio?.runtime || {};
-  const emptyPortfolio=!(state.dashboard.portfolio?.positions || []).length;
-  container.replaceChildren();
-  [["股票新闻",`最新原文 ${formatDate(published,true)}`,`采集 ${formatDate(collected,true)} · 判断 ${formatDate(analyzed,true)} · ${runtime.scan_in_progress?"采集中":run?.errors?.length?"采集有错误":run?"上一轮完成":"尚未完成采集"}`],
-   ["资产专题报价","黄金 / BTC / 原油 / 五年期美债",priceCopy],
-   ["我的资产",emptyPortfolio ? "当前无持仓" : `行情快照 ${formatDate(portfolio.updated_at,true)}`,emptyPortfolio ? "0 项持仓" : portfolio.errors?.length?`${portfolio.errors.slice(0,2).join("；")}${portfolio.errors.length>2?`；另 ${portfolio.errors.length-2} 项警告`:""}`:({live:"已取得行情",partial:"部分行情可用",waiting:"等待行情"}[portfolio.status] || "状态待确认")]].forEach(([title,value,note])=>{const cell=el("div");cell.append(el("span","",title),el("strong","",value),el("small","",note));container.append(cell);});
+  renderHoldingFocus(events.holdings);
+  renderFreshnessStatus();
+  renderCompass();
 }
 
 async function refreshNews() {
@@ -3183,18 +3579,17 @@ async function refreshNews() {
   state.newsPending = true;
   try {
     const language = state.newsLanguage;
-    const data = await api(`/api/news?language=${language}`);
+    const data = await api(`/api/news?language=${language}&cached=1`);
     if (language !== state.newsLanguage) return;
     if (state.liveNews && data.generated_at < state.liveNews.generated_at) return;
     state.liveNews = data;
     const caption = document.getElementById("auto-caption");
     caption.textContent = data.runtime.auto_enabled ? `${data.runtime.scan_in_progress ? "采集中" : "等待下一轮"} · 间隔 ${data.runtime.poll_interval_seconds} 秒` : "已关闭";
     caption.title = data.runtime.source_note;
-    const signature = JSON.stringify(currentNews());
+    const signature = JSON.stringify([currentNews(), data.runtime, data.news_refresh]);
     if (signature !== state.newsSignature) {
       state.newsSignature = signature;
-      renderOverview();
-      applyNewsFilters();
+      if (["overview", "signals", "feed"].includes(state.currentView)) renderDashboardView(undefined, {force:true});
     }
   } catch (error) {
     const caption = document.getElementById("auto-caption");
@@ -3210,9 +3605,10 @@ function applyNewsFilters() {
   const query = document.getElementById("news-search").value.trim().toLocaleLowerCase();
   const market = document.getElementById("market-filter").value;
   const items = currentNews().filter((item) => {
-    const sentimentMatch = state.sentimentFilter === "all" || item.polarity === state.sentimentFilter;
+    const judgment = newsJudgment(item);
+    const sentimentMatch = state.sentimentFilter === "all" || judgment.polarity === state.sentimentFilter;
     const marketMatch = market === "all" || item.market === market;
-    const text = `${item.symbol} ${item.title} ${item.title_zh || ""} ${item.source || ""} ${item.analysis_summary} ${eventLabels[item.event_type] || ""}`.toLocaleLowerCase();
+    const text = `${instrumentLabel(item)} ${item.title} ${item.title_zh || ""} ${item.source || ""} ${item.analysis_summary} ${eventLabels[item.event_type] || ""}`.toLocaleLowerCase();
     return sentimentMatch && marketMatch && (!query || text.includes(query));
   });
   items.sort((a, b) => {
@@ -3226,16 +3622,11 @@ function applyNewsFilters() {
 function openDetail(item) {
   const dialog = document.getElementById("detail-dialog");
   const market = document.getElementById("detail-market");
-  market.textContent = `${marketLabels[item.market] || item.market} · ${item.symbol}`;
+  market.textContent = `${instrumentLabel(item)} · ${marketLabels[item.market] || item.market}`;
   briefAfterTitle("detail-market", item);
   document.getElementById("detail-event").textContent = eventLabels[item.event_type] || "其他";
   renderNewsDetailText(item);
   document.getElementById("detail-source").textContent = `${item.source || "未知来源"} · ${formatDate(item.published_at)}`;
-  const score = document.getElementById("detail-score");
-  score.textContent = `${scoreLabel(item.score)} ${formatScore(item.score)}`;
-  score.className = scoreClass(item.score);
-  document.getElementById("detail-horizon").textContent = item.horizon || "--";
-  document.getElementById("detail-analysis").textContent = item.analysis_summary || "暂无分析摘要";
 
   const factors = document.getElementById("detail-factors");
   factors.replaceChildren();
@@ -3275,7 +3666,7 @@ function openDetail(item) {
     dialog.close();
     const watch = state.dashboard?.watchlist?.find(row => row.market === item.market && normalizeStockSymbol(row.symbol) === normalizeStockSymbol(item.symbol));
     openStrategyEditor({name:watch?.name || item.symbol,target:`${item.market}:${item.symbol}`,kind:"stock",horizon:item.horizon,
-      data_as_of:(item.published_at || "").slice(0,10),fundamentals:item.analysis_summary || "",risks:(item.risk_flags || []).join("\n"),
+      data_as_of:(item.published_at || "").slice(0,10),fundamentals:newsDetailSummary(item),risks:(item.risk_flags || []).join("\n"),
       evidence:/^https?:\/\//i.test(item.url || "") ? [{url:item.url,excerpt:item.analysis_metadata?.evidence_text || item.news_summary || item.title,role:Number(item.score)<0 ? "counter":"support",as_of:(item.published_at || "").slice(0,10)}] : []});
   };
   const link = document.getElementById("detail-link");
@@ -3291,9 +3682,37 @@ function openDetail(item) {
   dialog.showModal();
 }
 
+function movementExplanation(item) {
+  const detail = item.reason_details || {};
+  const linked = detail.version === 2 && detail.status === "linked" && /^https?:\/\//i.test(item.evidence_url || "");
+  const chinese = text => typeof text === "string" && /[\u3400-\u9fff]{2}/.test(text);
+  const translatedFacts = (detail.facts || []).map(row => chinese(row.text_zh) ? row.text_zh : chinese(row.text) ? row.text : "");
+  const needAllFacts = detail.relation === "mixed" || translatedFacts.length > 1 || !detail.fact_summary;
+  const complete = translatedFacts.length > 0 && translatedFacts.every(Boolean);
+  const facts = linked && (!needAllFacts || complete)
+    ? [detail.fact_summary, ...(needAllFacts ? translatedFacts : [])].filter(Boolean).join("；") : "";
+  const ready = Boolean(linked && chinese(facts));
+  const label = ready ? detail.relation === "opposed" ? "反向证据 · 非充分解释" : detail.relation === "mixed" ? "正反证据并存" : "关联线索 · 非确认原因"
+    : linked ? "中文证据整理中" : "原因未核实";
+  return {ready, label, facts, interpretation:ready ? detail.summary || "" : "",
+    relation:ready ? detail.relation_text || "" : "", limitation:detail.limitation || "现有证据不足，暂不提供归因。",
+    translated:ready && needAllFacts && (detail.facts || []).some(row=>row.text_zh && row.text_zh!==row.text)};
+}
+
+function appendMovementExplanation(container, item) {
+  const note = movementExplanation(item);
+  if (note.ready) {
+    container.append(el("p","movement-fact",`${note.translated ? "报道要点（机器翻译）" : "报道要点"}：${note.facts}`),
+      el("p","movement-interpretation",`影响解读：${note.interpretation}`),
+      el("p","movement-validation",note.relation));
+  }
+  window.MovementInvestigation?.append(container, item);
+  return note;
+}
+
 function openMovementDetail(item) {
   const dialog = document.getElementById("movement-dialog");
-  document.getElementById("movement-detail-market").textContent = `${marketLabels[item.market] || item.market} · ${item.symbol}`;
+  document.getElementById("movement-detail-market").textContent = `${instrumentLabel(item)} · ${marketLabels[item.market] || item.market}`;
   document.getElementById("movement-detail-type").textContent = movementTypeLabels[item.movement_type] || "异动";
   document.getElementById("movement-detail-title").textContent = item.name;
   briefAfterTitle("movement-detail-title", item);
@@ -3304,8 +3723,16 @@ function openMovementDetail(item) {
   change.className = item.change_pct >= 0 ? "positive" : "negative";
   document.getElementById("movement-detail-volume").textContent = item.relative_volume == null ? "--" : `${Number(item.relative_volume).toFixed(2)}x`;
   document.getElementById("movement-detail-intensity").textContent = `${Number(item.intensity_score || 0).toFixed(0)} / 100`;
-  document.getElementById("movement-detail-confidence").textContent = item.live_extended ? "消息原因待确认" : `${confidenceLabel(item.confidence)} · ${Math.round(Number(item.confidence || 0) * 100)}%`;
-  document.getElementById("movement-detail-reason").textContent = item.reason_summary;
+  const explanation = movementExplanation(item);
+  document.getElementById("movement-detail-confidence").textContent = explanation.label;
+  document.getElementById("movement-detail-reason").textContent = explanation.ready
+    ? [`报道要点${explanation.translated ? "（机器翻译）" : ""}：${explanation.facts}`, `影响解读：${explanation.interpretation}`, explanation.relation, explanation.limitation].filter(Boolean).join("\n\n")
+    : `${explanation.label}。${explanation.limitation}`;
+  const investigation = document.getElementById("movement-detail-investigation");
+  if (investigation) {
+    investigation.replaceChildren();
+    window.MovementInvestigation?.append(investigation, item);
+  }
 
   const trump = item.trump_factor || {};
   const trumpScore = document.getElementById("movement-trump-score");
@@ -3375,11 +3802,12 @@ function pollScanStatus() {
   window.clearInterval(state.scanPoller);
   state.scanPoller = window.setInterval(async () => {
     try {
-      const data = await api("/api/dashboard");
-      renderDashboard(data);
+      const data = await api("/api/runtime");
+      renderRuntime(data);
       if (!data.runtime.scan_in_progress && !data.runtime.movement_scan_in_progress) {
         window.clearInterval(state.scanPoller);
         state.scanPoller = null;
+        await refreshDashboard({silent:true});
         const errors = data.runtime.last_run?.errors || [];
         showToast(errors.length ? `检测完成，${errors.length} 项警告` : "检测完成", errors.length ? "error" : "success");
       }
@@ -3408,11 +3836,12 @@ function pollMovementStatus() {
   window.clearInterval(state.movementPoller);
   state.movementPoller = window.setInterval(async () => {
     try {
-      const data = await api("/api/dashboard");
-      renderDashboard(data);
+      const data = await api("/api/runtime");
+      renderRuntime(data);
       if (!data.runtime.movement_scan_in_progress) {
         window.clearInterval(state.movementPoller);
         state.movementPoller = null;
+        await refreshDashboard({silent:true});
         const run = data.runtime.last_movement_run;
         const errors = run?.errors || [];
         const message = errors.length
@@ -3442,8 +3871,10 @@ async function removeWatchItem(item) {
     await api(`/api/watchlist/${encodeURIComponent(item.market)}/${encodeURIComponent(item.symbol)}`, { method: "DELETE" });
     showToast(`${item.symbol} 已移除`, "success");
     await refreshDashboard({ silent: true });
+    return true;
   } catch (error) {
     showToast(error.message, "error");
+    return false;
   }
 }
 
@@ -3451,13 +3882,76 @@ function setPositionAction(action) {
   const form = document.getElementById("position-adjust-form");
   const isFund = form.elements.market.value === "FUND";
   form.elements.action.value = action;
+  const sell = action === "sell";
+  form.elements.quantity.max = sell ? form.dataset.quantity || "" : "";
+  form.elements.extra_buy_fee.disabled = !sell;
+  form.elements.cost_fees_confirmed.disabled = !sell;
+  form.elements.cost_fees_confirmed.required = sell;
+  document.getElementById("position-sell-fees").hidden = !sell;
+  document.getElementById("position-sell-all").hidden = !sell;
+  for (const [direction, analysis, reason] of [["buy", "entry_analysis", "buy_reason"], ["sell", "exit_analysis", "sell_reason"]]) {
+    const active = direction === action;
+    document.getElementById(`position-${direction}-rationale`).hidden = !active;
+    form.elements[analysis].disabled = form.elements[reason].disabled = !active;
+    form.elements[reason].required = active;
+  }
   document.querySelectorAll("#position-action-control button").forEach((button) => {
     button.classList.toggle("active", button.dataset.positionAction === action);
   });
   document.getElementById("position-adjust-submit").textContent = action === "buy" ? "确认加仓" : "确认减仓";
   document.getElementById("position-adjust-note").textContent = action === "buy"
-    ? "加仓将按成交价格重新计算平均成本。"
-    : `减仓不会改变剩余${isFund ? "份额" : "持仓"}的平均成本；数量减至零会自动清仓。`;
+    ? "加仓按成交金额加本次费用重新计算平均成本，买入费用不会在卖出时重复扣除。"
+    : `减仓不改变剩余${isFund ? "份额" : "持仓"}均价；卖完会清仓，成交及扣费后的已实现盈亏永久保留。删除持仓记录不等于卖出。`;
+}
+
+function positionRationale(form, action) {
+  const buy = action === "buy", analysis = buy ? "entry_analysis" : "exit_analysis", reason = buy ? "buy_reason" : "sell_reason";
+  const result = {};
+  for (const [key, label, required] of [[analysis, buy ? "买入分析" : "卖出分析", false], [reason, buy ? "买入原因" : "卖出原因", true]]) {
+    const raw = form.get(key) ?? "";
+    if (typeof raw !== "string" || raw.length > 2000) throw new Error(`${label}须为不超过2000字的文字`);
+    const text = raw.trim();
+    if (required && !text) throw new Error(`请填写${label}`);
+    result[key] = text;
+  }
+  return result;
+}
+
+function buildNewPositionPayload(form) {
+  const payload = {market:form.get("market"), symbol:form.get("symbol"), name:form.get("name"),
+    quantity:Number(form.get("quantity")), average_cost:Number(form.get("average_cost")),
+    currency:form.get("currency"), fund_type:form.get("fund_type"), cost_currency:form.get("cost_currency"),
+    cost_fx_rate:form.get("cost_fx_rate"), cost_fx_date:form.get("cost_fx_date"),
+    plan:positionRationale(form, "buy")};
+  if (form.get("registration_mode") === "opening") {
+    const rawFee = form.get("opening_fee"), fee = Number(rawFee);
+    if (!String(rawFee ?? "").trim() || !Number.isFinite(fee) || fee < 0 || fee > 1e12) throw new Error("请填写实际成交费用，无费用请填0");
+    const tradeDate = form.get("opening_date");
+    if (!tradeDate) throw new Error("请填写实际成交日期");
+    payload.opening_trade = {trade_date:tradeDate, fee, request_id:form.get("request_id") || undefined};
+  }
+  return payload;
+}
+
+function buildPositionAdjustmentPayload(form) {
+  const number = (key, label, minimum = 0) => {
+    const raw = form.get(key);
+    if (raw == null || typeof raw === "boolean" || String(raw).trim() === "") throw new Error(`请填写${label}，无费用请明确填0`);
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < minimum || value > 1e12) throw new Error(`${label}须为有效${minimum ? "正" : "非负"}数`);
+    return value;
+  };
+  const action = form.get("action");
+  if (!["buy", "sell"].includes(action)) throw new Error("请选择加仓或减仓");
+  const confirmed = [true, "on", "true"].includes(form.get("cost_fees_confirmed"));
+  if (action === "sell" && !confirmed) throw new Error("请先核对买入费用是否已计入成本或分摊费用");
+  const tradeDate = form.get("trade_date");
+  if (!tradeDate) throw new Error("请填写成交日期");
+  return {market:form.get("market"), symbol:form.get("symbol"), action,
+    quantity:number("quantity", "数量", 0.000001), execution_price:number("execution_price", "成交价格", 0.000001),
+    fee:number("fee", "本次费用"), extra_buy_fee:action === "sell" ? number("extra_buy_fee", "分摊买入费用") : 0,
+    cost_fees_confirmed:confirmed, trade_date:tradeDate, request_id:form.get("request_id") || undefined,
+    ...positionRationale(form, action)};
 }
 
 function openPositionAdjust(item, action) {
@@ -3466,13 +3960,39 @@ function openPositionAdjust(item, action) {
   form.reset();
   form.elements.market.value = item.market;
   form.elements.symbol.value = item.symbol;
+  form.dataset.quantity = item.quantity;
+  form.dataset.portfolioId = portfolioContext.id;
+  form.dataset.saving = "";
+  form.elements.request_id.value = window.crypto?.randomUUID?.() || `trade-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const local = new Date();
+  form.elements.trade_date.value = `${local.getFullYear()}-${String(local.getMonth()+1).padStart(2,"0")}-${String(local.getDate()).padStart(2,"0")}`;
+  form.elements.fee.value = "";
+  form.elements.extra_buy_fee.value = "0";
+  form.elements.cost_fees_confirmed.checked = false;
+  document.getElementById("position-trade-fee-label").textContent = `本次交易费用合计（${item.currency}）`;
   const priceDigits = item.market === "FUND" ? 4 : item.currency === "KRW" ? 0 : 2;
   form.elements.execution_price.value = Number(item.price || item.average_cost || 0).toFixed(priceDigits);
   form.elements.quantity.max = action === "sell" ? String(item.quantity) : "";
   document.getElementById("position-adjust-title").textContent = `${item.name} · ${formatPositionQuantity(item.quantity)} ${item.market === "FUND" ? "份" : "股"}`;
+  const whitelist = item.whitelist_source || positionWhitelistItem(item.market, item.symbol);
+  form.elements.entry_analysis.value = item.plan?.entry_analysis ?? whitelist?.analysis ?? "";
+  form.elements.buy_reason.value = item.plan?.buy_reason ?? whitelist?.reason ?? "";
+  positionWhitelistNote(form, whitelist, Boolean(item.whitelist_source));
   briefAfterTitle("position-adjust-title", item);
   setPositionAction(action);
   dialog.showModal();
+}
+
+function updatePositionRegistration() {
+  const form = document.getElementById("position-form");
+  const opening = form.elements.registration_mode.value === "opening";
+  const isFund = form.elements.market.value === "FUND";
+  document.getElementById("position-opening-fields").hidden = !opening;
+  document.getElementById("position-balance-cost").hidden = opening;
+  for (const name of ["opening_date", "opening_fee"]) form.elements[name].disabled = !opening;
+  for (const name of ["cost_currency", "cost_fx_rate", "cost_fx_date"]) form.elements[name].disabled = opening;
+  document.getElementById("position-quantity-label").textContent = opening ? (isFund ? "成交份额" : "成交数量") : (isFund ? "持有份额" : "持仓数量");
+  document.getElementById("position-cost-label").textContent = opening ? (isFund ? "成交净值（未含费用）" : "成交价格（未含费用）") : (isFund ? "每份平均成本" : "平均成本");
 }
 
 function updatePositionFormMarket(market) {
@@ -3485,8 +4005,7 @@ function updatePositionFormMarket(market) {
   document.getElementById("fund-search-section").hidden = !isFund;
   document.getElementById("position-symbol-label").textContent = isFund ? "基金代码" : "股票代码";
   document.getElementById("position-name-label").textContent = isFund ? "基金名称" : "公司名称";
-  document.getElementById("position-quantity-label").textContent = isFund ? "持有份额" : "持仓数量";
-  document.getElementById("position-cost-label").textContent = isFund ? "每份平均成本" : "平均成本";
+  updatePositionRegistration();
   form.elements.symbol.placeholder = isFund ? "例如 110022" : "例如 MU / 0700.HK";
   form.elements.name.placeholder = isFund ? "可通过上方检索自动填写" : "例如 Micron Technology";
   document.getElementById("position-form-note").textContent = isFund
@@ -3499,10 +4018,84 @@ function updatePositionFormMarket(market) {
   }
 }
 
-function openPositionDialog() {
+function positionWhitelistKey(market, rawSymbol) {
+  market = String(market || "").trim().toUpperCase();
+  let symbol = String(rawSymbol || "").trim().toUpperCase();
+  if (market === "US") return /^[A-Z][A-Z0-9.-]{0,23}$/.test(symbol) ? `${market}:${symbol}` : "";
+  const match = symbol.match(/^(\d{1,6})(?:\.([A-Z]{2}))?$/);
+  if (!match || !Number(match[1])) return "";
+  const allowed = {CN:["SS","SZ","BJ"],HK:["HK"],KR:["KS","KQ"],FUND:[]}[market];
+  if (!allowed || match[2] && !allowed.includes(match[2])) return "";
+  if (["CN","FUND"].includes(market) && match[1].length !== 6 || market === "HK" && match[1].length > 5) return "";
+  if (market !== "FUND") {
+    const code = String(Number(match[1])).padStart(market === "HK" ? 4 : 6, "0");
+    const suffix = match[2] || (market === "HK" ? "HK" : market === "KR" ? "KS" : /^[569]/.test(code) ? "SS" : /^[48]/.test(code) ? "BJ" : "SZ");
+    symbol = `${code}.${suffix}`;
+  }
+  return `${market}:${symbol}`;
+}
+
+function positionWhitelistItem(market, symbol) {
+  const key = positionWhitelistKey(market, symbol);
+  return key ? (state.dashboard?.stock_whitelist || []).find(item => positionWhitelistKey(item.market, item.symbol) === key) : undefined;
+}
+
+function positionWhitelistNote(form, item, frozen = false) {
+  const adding = form.id === "position-form", id = adding ? "position-whitelist-source" : "position-adjust-whitelist-source";
+  let note = document.getElementById(id);
+  if (!note) {
+    note = el("p", "form-note"); note.id = id; note.setAttribute("role", "status");
+    document.getElementById(adding ? "position-form-note" : "position-adjust-note").before(note);
+  }
+  const book = (state.dashboard?.portfolios || []).find(row => row.id === portfolioContext.id);
+  const bookName = book?.name || (state.dashboard?.portfolio?.id === portfolioContext.id ? state.dashboard.portfolio.name : "") || "当前组合";
+  note.textContent = `登记到“${bookName}”${item ? ` · 关联白名单 ${item.market}:${item.symbol}；${frozen ? "建仓时的白名单资料已留存" : "分析和理由已带入空白项"}，本次买入内容可修改后保存。` : "。"}`;
+}
+
+function syncPositionWhitelist(event) {
+  const form = document.getElementById("position-form");
+  const draft = form._whitelistPrefill || (form._whitelistPrefill = {key:"", inherited:{}, touched:new Set()});
+  const edited = event?.target?.name;
+  if (["entry_analysis","buy_reason"].includes(edited)) {
+    draft.touched.add(edited); delete draft.inherited[edited];
+  }
+  const key = positionWhitelistKey(form.elements.market.value, form.elements.symbol.value);
+  if (draft.key !== key) {
+    for (const [field, value] of Object.entries(draft.inherited)) {
+      if (form.elements[field].value === value) form.elements[field].value = "";
+    }
+    form.elements.name.value = "";
+    draft.inherited = {}; draft.key = key;
+  }
+  const book = state.dashboard?.portfolio;
+  const pending = book?.id === portfolioContext.id
+    ? (book.pending_positions || []).find(item => positionWhitelistKey(item.market, item.symbol) === key) : null;
+  const item = pending?.whitelist_source || positionWhitelistItem(form.elements.market.value, form.elements.symbol.value);
+  if (item) {
+    for (const [field, source] of [["name","name"],["entry_analysis","analysis"],["buy_reason","reason"]]) {
+      if (!form.elements[field].value && !draft.touched.has(field)) {
+        form.elements[field].value = item[source] || ""; draft.inherited[field] = form.elements[field].value;
+      }
+    }
+  }
+  positionWhitelistNote(form, item);
+  return item;
+}
+
+function openPositionDialog(item = null) {
+  if (portfolioContext.switching || portfolioContext.writes) { showToast("正在切换或保存组合，请稍后再登记", "error"); return; }
   const form = document.getElementById("position-form");
   form.reset();
-  updatePositionFormMarket("CN");
+  if (form.elements.request_id) form.elements.request_id.value = window.crypto?.randomUUID?.() || `opening-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  form.dataset.openSequence = String(Number(form.dataset.openSequence || 0) + 1);
+  form._whitelistPrefill = {key:"", inherited:{}, touched:new Set()};
+  form.dataset.portfolioId = portfolioContext.id;
+  const fromWhitelist = item?.whitelist_source || (item?.market && item?.symbol ? positionWhitelistItem(item.market, item.symbol) : null);
+  form.elements.market.value = fromWhitelist?.market || "CN";
+  form.elements.symbol.value = fromWhitelist?.symbol || "";
+  updatePositionFormMarket(form.elements.market.value);
+  syncPositionWhitelist();
+  document.getElementById("position-identity-status").textContent = fromWhitelist ? "已匹配白名单；保存时核验证券身份。" : "";
   positionFormBrief();
   document.getElementById("fund-search-results").replaceChildren();
   document.getElementById("position-dialog").showModal();
@@ -3559,7 +4152,7 @@ function loadPortfolioSortPreferences() {
   try {
     const key = window.localStorage.getItem(PORTFOLIO_SORT_KEY_STORAGE);
     const direction = window.localStorage.getItem(PORTFOLIO_SORT_DIRECTION_STORAGE);
-    if (["default", "market_value", "daily_pnl", "total_pnl"].includes(key)) state.portfolioSortKey = key;
+    if (["default", "market_value", "daily_pnl", "total_pnl", "daily_pct", "total_pct"].includes(key)) state.portfolioSortKey = key;
     if (["asc", "desc"].includes(direction)) state.portfolioSortDirection = direction;
   } catch (_) {
     // The in-memory defaults remain available when browser storage is blocked.
@@ -3602,6 +4195,50 @@ async function removePortfolioPosition(item = null) {
   }
 }
 
+async function downloadAttachment(response, fallbackName) {
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = encodedName ? decodeURIComponent(encodedName) : fallbackName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportPortfolioSnapshot() {
+  const button = document.getElementById("portfolio-export-button");
+  if (button.disabled) return;
+  if (portfolioContext.switching || portfolioContext.writes || state.portfolioDeletePending) {
+    showToast("正在读取或保存组合，请稍后导出", "info");
+    return;
+  }
+  if (state.portfolioPrincipalDirty || document.getElementById("pr-account")?.dataset.dirty === "1") {
+    showToast("请先保存账户设置和本金，再导出复盘", "info");
+    return;
+  }
+  const identifier = portfolioContext.id;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch(`/api/portfolio/export.xlsx?portfolio_id=${encodeURIComponent(identifier)}`, {cache: "no-store"});
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.error || "复盘导出失败，请稍后重试");
+    }
+    await downloadAttachment(response, "STock-组合复盘.xlsx");
+    showToast("复盘快照已生成，请在下载中保存 Excel", "success");
+  } catch (error) {
+    showToast(error.message || "复盘导出失败，请稍后重试", "error");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
 async function refreshPortfolioQuotes() {
   const button = document.getElementById("portfolio-refresh-button");
   button.disabled = true;
@@ -3618,13 +4255,15 @@ async function refreshPortfolioQuotes() {
 function pollPortfolioStatus() {
   window.clearInterval(state.portfolioPoller);
   const initialUpdatedAt = state.dashboard?.portfolio?.runtime?.updated_at || null;
+  refreshDashboard({silent:true});
   let sawRefreshing = false;
   let attempts = 0;
   state.portfolioPoller = window.setInterval(async () => {
     attempts += 1;
     try {
-      const data = await api("/api/dashboard");
-      renderDashboard(data);
+      const data = await api("/api/runtime");
+      if (data.portfolio?.id !== portfolioContext.id) return;
+      renderRuntime(data);
       const runtime = data.portfolio?.runtime || {};
       const refreshing = Boolean(runtime.refresh_in_progress);
       sawRefreshing ||= refreshing;
@@ -3633,6 +4272,7 @@ function pollPortfolioStatus() {
         window.clearInterval(state.portfolioPoller);
         state.portfolioPoller = null;
         document.getElementById("portfolio-refresh-button").disabled = false;
+        await refreshDashboard({silent:true});
       }
     } catch (_) {
       if (attempts >= 20) {
@@ -3645,14 +4285,21 @@ function pollPortfolioStatus() {
 }
 
 function setView(view, { refresh = true } = {}) {
+  const previousView = state.currentView;
   if(view === "trump") { view="social";setSocialView("trump"); }
-  const inEvents = ["signals", "feed", "movements", "alerts"].includes(view);
   if (!document.querySelector(`.view[data-view="${view}"]`)) view = "overview";
+  const inEvents = ["signals", "feed", "movements", "alerts", "social"].includes(view);
+  const inValidation = view === "research" && ["forecasts", "inputs", "stats"].includes(researchState.tab);
+  const inEtf = view === "research" && researchState.tab === "etf";
+  const inBacktest = view === "backtest" || inValidation;
   state.currentView = view;
+  window.PortfolioWorkspace?.syncAnalysis();
   document.querySelector(".topbar").classList.toggle("social-header", !["overview","signals","feed","alerts","watchlist"].includes(view));
+  document.querySelector(".topbar").classList.toggle("indices-header", view === "indices");
+  document.getElementById("indices-caption").hidden = view !== "indices";
   document.querySelectorAll(".view").forEach((node) => node.classList.toggle("active", node.dataset.view === view));
   document.querySelectorAll(".nav-item").forEach((node) => {
-    const active = node.dataset.viewTarget === view || (node.dataset.viewTarget === "signals" && inEvents) || (node.dataset.viewTarget === "indices" && view === "korea-stocks") || (view === "research" && node.dataset.tab === researchState.tab);
+    const active = node.dataset.viewTarget === view || (node.dataset.viewTarget === "signals" && inEvents) || (node.dataset.viewTarget === "indices" && view === "korea-stocks") || (view === "research" && node.dataset.tab === (["landscape", "peers", "allocation"].includes(researchState.tab) ? "cards" : researchState.tab === "stats" ? "inputs" : researchState.tab));
     node.classList.toggle("active", active);
     if (active) node.setAttribute("aria-current", "page");
     else node.removeAttribute("aria-current");
@@ -3663,8 +4310,14 @@ function setView(view, { refresh = true } = {}) {
   marketGroup.open = inMarket && window.innerWidth > 760;
   const researchGroup = document.getElementById("nav-research");
   if (researchGroup) {
-    researchGroup.querySelector("summary").classList.toggle("has-current", view === "research");
-    researchGroup.open = view === "research" && window.innerWidth > 760;
+    researchGroup.querySelector("summary").classList.toggle("has-current", view === "research" && !inValidation);
+    researchGroup.open = view === "research" && !inValidation && window.innerWidth > 760;
+  }
+  const backtestGroup = document.getElementById("nav-backtest");
+  if (backtestGroup) {
+    backtestGroup.querySelector("summary").classList.toggle("has-current", inBacktest || view === "short-term");
+    backtestGroup.open = (inBacktest || view === "short-term") && window.innerWidth > 760;
+    if (view === "backtest") window.BacktestWorkspace?.select(window.BacktestWorkspace.tab);
   }
   const eventTabs = document.getElementById("event-center-tabs");
   if (eventTabs) {
@@ -3677,26 +4330,33 @@ function setView(view, { refresh = true } = {}) {
   }
   const titles = {
     overview: ["市场情报", "监测总览"],
-    social: ["社交讨论观察", "情绪仪表盘"],
+    social: ["社交讨论 · Trump 政策因子", "事件中心"],
     research: ["公司研究 · 条件判断 · 版本留痕", "研究复盘"],
+    etf: ["研究复盘", "ETF 对比"],
+    backtest: ["历史模拟 · 费用后评估", "回测系统"],
+    "short-term": ["量价观察 · 滚动验证", "短线研判"],
     signals: ["市场情报", "事件中心"],
     feed: ["事件数据库", "事件中心"],
     alerts: ["重点信号", "事件中心"],
     movements: ["持仓雷达", "事件中心"],
-    assets: ["跨资产雷达", "黄金、Bitcoin、原油与五年期美债"],
+    assets: ["黄金 · Bitcoin · 原油 · 五年期美债", "跨资产监测"],
     "korea-stocks": ["韩国核心股", "三星 / 海力士"],
-    indices: ["全球指数", "韩国综合、科创50、费城半导体、纳斯达克"],
-    portfolio: ["个人资产", "我的资产"],
+    indices: ["自选指数 · 全球市场", "指数监测"],
+    portfolio: ["团队持仓", "持仓组合"],
     trump: ["政策事件雷达", "Trump X 动态"],
     watchlist: ["监测范围", "股票池"],
     settings: ["本地配置", "系统设置"],
   };
-  document.getElementById("page-eyebrow").textContent = titles[view][0];
-  document.getElementById("page-title").textContent = titles[view][1];
+  const heading = titles[inBacktest ? "backtest" : inEtf ? "etf" : view];
+  document.getElementById("page-eyebrow").textContent = heading[0];
+  document.getElementById("page-title").textContent = heading[1];
+  window.PortfolioBooks?.syncHeader();
   if (typeof saveStartupPreferences === "function") saveStartupPreferences();
+  renderDashboardView(undefined, {force:true});
   if (!refresh) return;
-  if (view === "signals" && typeof renderEventCenter === "function") renderEventCenter();
-  if (view === "indices" && typeof refreshIndices === "function") refreshIndices();
+  if (previousView === 'portfolio' && view !== 'portfolio') refreshDashboard({silent:true});
+  if (view === "assets") refreshAssets({silent:true});
+  if (["overview", "indices"].includes(view) && typeof refreshIndices === "function") refreshIndices({silent:true});
   if (view === "korea-stocks") {
     window.setTimeout(() => refreshKoreaStocks({ silent: true }), 0);
   }
@@ -3706,6 +4366,7 @@ function setView(view, { refresh = true } = {}) {
   if (view === "social") refreshSocial();
   if (view === "settings") refreshFeatureHealth();
   if (view === "research") refreshResearch();
+  if (view === "backtest" && window.BacktestWorkspace?.tab === "workbench") window.refreshBacktest?.();
 }
 
 function showToast(message, type = "info") {
@@ -3728,22 +4389,165 @@ function bindDialogs() {
   });
 }
 
+async function savePortfolioCurrency(event) {
+  const select = event.currentTarget;
+  if (select.disabled) return;
+  const currency = select.value;
+  const previous = state.dashboard?.portfolio?.base_currency || "CNY";
+  const selected = portfolioContext.id;
+  // Keep the control aligned with the displayed amounts until refreshed values arrive.
+  select.value = previous;
+  if (currency === previous) return;
+  if (portfolioContext.writes || portfolioContext.switching) {
+    showToast("正在保存或读取组合，请稍后切换计价币种", "info");
+    return;
+  }
+  if (document.getElementById("pr-account")?.dataset.dirty === "1") {
+    showToast("账户设置有未保存的修改，请先保存账户设置", "error");
+    return;
+  }
+  select.disabled = true;
+  try {
+    await api("/api/portfolio/account", {method: "POST", body: {base_currency: currency}});
+    const data = await refreshDashboard({silent: true});
+    if (selected !== portfolioContext.id) return;
+    if (!data || data.portfolio?.base_currency !== currency) {
+      showToast("计价币种已保存，金额等待刷新", "info");
+      return;
+    }
+    showToast(`持仓计价已切换为${select.selectedOptions[0].textContent}`, "success");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    select.value = state.dashboard?.portfolio?.base_currency || "CNY";
+    select.disabled = false;
+  }
+}
+
+function openPortfolioCash() {
+  if (portfolioContext.writes || portfolioContext.switching) { showToast('正在保存或读取组合，请稍后修改现金', 'info'); return; }
+  if (document.getElementById('pr-account')?.dataset.dirty === '1') { showToast('账户设置有未保存的修改，请先保存账户设置', 'error'); return; }
+  const portfolio = state.dashboard?.portfolio;
+  if (!portfolio?.account) { showToast('组合尚未加载，请稍后重试', 'info'); return; }
+  const account = portfolio.account;
+  const balances = account.cash_balances || (account.cash != null ? {[account.cash_currency || 'CNY']: account.cash} : {});
+  const dialog = document.getElementById('portfolio-cash-dialog');
+  if (dialog.open) return;
+  dialog.dataset.portfolioId = portfolioContext.id;
+  dialog.dataset.cashMode = account.cash_mode;
+  document.getElementById('portfolio-cash-book').textContent = portfolio.name || '当前组合';
+  for (const [kind, amounts, label] of [['cash', balances, '库存现金'], ['receivable', account.receivable_balances || {}, '应收账款'], ['payable', account.payable_balances || {}, '应付账款']]) {
+    document.getElementById(`portfolio-${kind}-rows`).innerHTML = Object.entries({CNY:'人民币', HKD:'港币', USD:'美元', KRW:'韩元'}).map(([currency, name]) => {
+      const selected = Object.hasOwn(amounts, currency);
+      return `<div class="portfolio-cash-row"><label><input type="checkbox" data-${kind}-currency="${currency}" ${selected ? 'checked' : ''}>${name} ${currency}</label><input type="text" inputmode="decimal" data-${kind}-amount="${currency}" aria-label="${name}${label}余额" value="${selected ? formatPortfolioPrincipal(amounts[currency]) : ''}" placeholder="0.00" ${selected ? '' : 'disabled'}></div>`;
+    }).join('');
+  }
+  document.getElementById('portfolio-cash-conversion').textContent = `按组合计价币种 ${portfolio.base_currency || 'CNY'} 折算汇总。${account.cash_mode === 'auto' ? '当前为自动估算；请核对实际余额。' : ''}`;
+  document.getElementById('portfolio-cash-error').textContent = '';
+  dialog.showModal();
+}
+
+async function savePortfolioCash(event) {
+  event.preventDefault();
+  const dialog = document.getElementById('portfolio-cash-dialog');
+  const button = document.getElementById('portfolio-cash-save');
+  const errorBox = document.getElementById('portfolio-cash-error');
+  if (button.disabled) return;
+  errorBox.textContent = '';
+  if (dialog.dataset.portfolioId !== portfolioContext.id) { dialog.close(); return; }
+  if (portfolioContext.writes || portfolioContext.switching) { errorBox.textContent = '组合正在保存或切换，请稍后重试。'; return; }
+  const balances = {};
+  for (const check of dialog.querySelectorAll('[data-cash-currency]:checked')) {
+    const currency = check.dataset.cashCurrency;
+    const input = dialog.querySelector(`[data-cash-amount="${currency}"]`);
+    const amount = portfolioPrincipalValue(input.value);
+    if (amount === null) { errorBox.textContent = `${currency} 请输入 0 至 1,000,000,000,000 的金额，最多两位小数。`; input.focus(); return; }
+    balances[currency] = amount;
+  }
+  if (!Object.keys(balances).length && dialog.dataset.cashMode !== 'auto') { errorBox.textContent = '请至少选择一个币种；无现金时可填写 0.00。'; return; }
+  const debts = {receivable_balances:{}, payable_balances:{}};
+  for (const [kind, label] of [['receivable', '应收账款'], ['payable', '应付账款']]) {
+    for (const check of dialog.querySelectorAll(`[data-${kind}-currency]:checked`)) {
+      const currency = check.getAttribute(`data-${kind}-currency`);
+      const input = dialog.querySelector(`[data-${kind}-amount="${currency}"]`);
+      const amount = portfolioPrincipalValue(input.value);
+      if (amount === null) { errorBox.textContent = `${currency} ${label}请输入有效金额，最多两位小数。`; input.focus(); return; }
+      debts[`${kind}_balances`][currency] = amount;
+    }
+  }
+  const controls = [...dialog.querySelectorAll('input, button')];
+  const disabled = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  let saved = false;
+  try {
+    await api('/api/portfolio/account', {method:'POST', body:{...(Object.keys(balances).length ? {cash_mode:'manual', cash_balances:balances} : {}), ...debts}});
+    saved = true;
+    dialog.close();
+    const data = await refreshDashboard({silent:true});
+    showToast(data ? '现金与往来账款已保存，本金未改变' : '现金与往来账款已保存，汇总等待刷新', data ? 'success' : 'info');
+  } catch (error) {
+    if (saved) showToast('现金与往来账款已保存，汇总等待刷新', 'info');
+    else errorBox.textContent = error.message;
+  } finally {
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+  }
+}
+
 function bindForms() {
-  document.querySelectorAll("#settings-form input, #settings-form button").forEach(control=>{control.disabled=true;});
-  document.getElementById("portfolio-principal-input").addEventListener("input", () => {
+  document.getElementById('portfolio-cash-open').addEventListener('click', openPortfolioCash);
+  document.getElementById('portfolio-cash-form').addEventListener('submit', savePortfolioCash);
+  document.getElementById('portfolio-cash-cancel').addEventListener('click', () => document.getElementById('portfolio-cash-dialog').close());
+  for (const kind of ['cash', 'receivable', 'payable']) {
+    const rows = document.getElementById(`portfolio-${kind}-rows`);
+    rows.addEventListener('change', event => {
+      const currency = event.target.getAttribute(`data-${kind}-currency`);
+      if (currency) rows.querySelector(`[data-${kind}-amount="${currency}"]`).disabled = !event.target.checked;
+    });
+    rows.addEventListener('focusout', event => {
+      if (!event.target.hasAttribute(`data-${kind}-amount`)) return;
+      const value = portfolioPrincipalValue(event.target.value);
+      if (value !== null) event.target.value = formatPortfolioPrincipal(value);
+    });
+  }
+  window.addEventListener('portfolio-change', () => document.getElementById('portfolio-cash-dialog').close());
+  document.getElementById("portfolio-base-currency").addEventListener("change", savePortfolioCurrency);
+  document.querySelectorAll("#settings-form input, #settings-form select, #analysis-mode-control button, #settings-save, #x-token-save-button, #x-token-clear-button, #analysis-key-save, #analysis-key-clear").forEach(control=>{control.disabled=true;});
+  const principalField = document.getElementById("portfolio-principal-input");
+  const validatePrincipal = () => {
+    const value = portfolioPrincipalValue(principalField.value);
+    principalField.setCustomValidity(value === null ? '请输入 0 至 1,000,000,000,000 之间的金额，最多两位小数。' : '');
+    return value;
+  };
+  principalField.addEventListener('focus', () => {
+    if (portfolioPrincipalValue(principalField.value) !== null) principalField.value = principalField.value.replaceAll(',', '');
+  });
+  principalField.addEventListener('blur', () => {
+    const value = validatePrincipal();
+    if (value !== null) principalField.value = formatPortfolioPrincipal(value);
+  });
+  principalField.addEventListener("input", () => {
     state.portfolioPrincipalDirty = true;
+    validatePrincipal();
     document.getElementById("portfolio-principal-error").textContent = "";
   });
   document.getElementById("portfolio-principal-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (state.portfolioPrincipalSaving) return;
+    if (document.getElementById("pr-account")?.dataset.dirty === "1") {
+      document.getElementById("portfolio-principal-error").textContent = "账户设置有未保存的修改，请先保存账户设置。";
+      return;
+    }
     const input = document.getElementById("portfolio-principal-input");
     const button = document.getElementById("portfolio-principal-save");
+    const principal = validatePrincipal();
+    if (principal === null) { input.reportValidity(); return; }
     state.portfolioPrincipalSaving = true;
     input.disabled = button.disabled = true;
     try {
-      const result = await api("/api/portfolio/principal", { method: "POST", body: { principal_cny: Number(input.value) } });
-      input.value = Number(result.principal_cny).toFixed(2);
+      const result = await api("/api/portfolio/account", { method: "POST", body: {
+        principal, principal_currency: state.dashboard?.portfolio?.account?.principal_currency || "CNY",
+      } });
+      input.value = formatPortfolioPrincipal(result.principal);
       state.portfolioPrincipalDirty = false;
       document.getElementById("portfolio-principal-error").textContent = "";
       showToast("本金已保存", "success");
@@ -3755,74 +4559,97 @@ function bindForms() {
       input.disabled = button.disabled = false;
     }
   });
+  document.getElementById("position-risk-clear").addEventListener("click", () => {
+    const form = document.getElementById("position-risk-form");
+    portfolioRiskFields.forEach(key => form.elements[key].value = "");
+    form.elements.enabled.checked = false;
+    document.getElementById("position-risk-error").textContent = "警戒线已清空，保存后生效。";
+  });
+  document.getElementById("position-risk-form").addEventListener("input", (event) => {
+    const alternate = portfolioRiskAlternatives[event.target.name];
+    if (alternate && event.target.value !== "") event.currentTarget.elements[alternate].value = "";
+  });
+  document.getElementById("position-risk-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, button = document.getElementById("position-risk-save");
+    if (button.disabled) return;
+    const rules = {enabled: form.elements.enabled.checked, desktop_notify: form.elements.desktop_notify.checked};
+    portfolioRiskFields.forEach(key => rules[key] = form.elements[key].value === "" ? null : Number(form.elements[key].value));
+    button.disabled = true;
+    document.getElementById("position-risk-clear").disabled = true;
+    try {
+      await api("/api/portfolio/risk", {method:"POST", body:{market:form.elements.market.value, symbol:form.elements.symbol.value, risk_settings:rules}});
+      document.getElementById("position-risk-dialog").close();
+      showToast("警戒线已保存，下一轮有效行情开始检测", "success");
+      await refreshDashboard({silent:true});
+      pollPortfolioStatus();
+    } catch (error) {
+      document.getElementById("position-risk-error").textContent = error.message;
+    } finally {
+      button.disabled = false;
+      document.getElementById("position-risk-clear").disabled = false;
+    }
+  });
   document.getElementById("position-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const formElement = event.currentTarget;
+    if (formElement.dataset.saving === '1') return;
     const form = new FormData(formElement);
+    const submit = formElement.querySelector('[type="submit"]');
+    const submitText = submit.textContent;
     try {
+      if (formElement.dataset.portfolioId !== portfolioContext.id) throw new Error("组合已切换，请重新打开新增持仓");
+      formElement.dataset.saving = '1'; submit.disabled = true; submit.textContent = '保存中…';
       await api("/api/portfolio/positions", {
         method: "POST",
-        body: {
-          market: form.get("market"),
-          symbol: form.get("symbol"),
-          name: form.get("name"),
-          quantity: Number(form.get("quantity")),
-          average_cost: Number(form.get("average_cost")),
-          currency: form.get("currency"),
-          fund_type: form.get("fund_type"),
-        },
+        body: {...buildNewPositionPayload(form), portfolio_id:formElement.dataset.portfolioId},
       });
       document.getElementById("position-dialog").close();
       formElement.reset();
       updatePositionFormMarket("CN");
       showToast("持仓已保存，正在获取行情", "success");
-      setView("portfolio");
+      setView("portfolio", {refresh:false});
       pollPortfolioStatus();
     } catch (error) {
       showToast(error.message, "error");
+    } finally {
+      formElement.dataset.saving = ''; submit.disabled = false; submit.textContent = submitText;
     }
   });
 
   document.getElementById("position-adjust-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const element = event.currentTarget;
+    if (element.dataset.saving === "1") return;
+    const form = new FormData(element);
+    const buttons = [...element.querySelectorAll("button")];
     try {
+      const body = buildPositionAdjustmentPayload(form);
+      if (element.dataset.portfolioId !== portfolioContext.id) throw new Error("组合已切换，请重新打开调整窗口");
+      element.dataset.saving = "1"; buttons.forEach(button => { button.disabled = true; });
       const result = await api("/api/portfolio/adjust", {
         method: "POST",
-        body: {
-          market: form.get("market"),
-          symbol: form.get("symbol"),
-          action: form.get("action"),
-          quantity: Number(form.get("quantity")),
-          execution_price: Number(form.get("execution_price")),
-        },
+        body,
       });
       document.getElementById("position-adjust-dialog").close();
       showToast(result.closed ? "持仓已减至零并清仓" : form.get("action") === "buy" ? "加仓已记录" : "减仓已记录", "success");
       pollPortfolioStatus();
+      try { await refreshDashboard(); } catch (error) { showToast(`成交已保存，界面暂未刷新：${error.message}`, "error"); }
     } catch (error) {
       showToast(error.message, "error");
+    } finally {
+      element.dataset.saving = ""; buttons.forEach(button => { button.disabled = false; });
     }
   });
-
-  document.getElementById("stock-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    try {
-      await api("/api/watchlist", {
-        method: "POST",
-        body: {
-          market: form.get("market"), symbol: form.get("symbol"), name: form.get("name"),
-          query: form.get("query"), aliases: form.get("aliases"),
-        },
-      });
-      document.getElementById("stock-dialog").close();
-      formElement.reset();
-      showToast("股票已加入监测池", "success");
-      await refreshDashboard({ silent: true });
-    } catch (error) { showToast(error.message, "error"); }
+  document.getElementById("position-sell-all").addEventListener("click", () => {
+    const form = document.getElementById("position-adjust-form");
+    form.elements.quantity.value = form.dataset.quantity;
   });
+  document.getElementById("position-adjust-dialog").addEventListener("cancel", event => {
+    if (document.getElementById("position-adjust-form").dataset.saving === "1") event.preventDefault();
+  });
+
+  window.StockWatchlist?.bind();
 
   document.getElementById("manual-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3876,19 +4703,20 @@ function bindForms() {
 }
 
 function bindControls() {
-  document.getElementById("restore-features").addEventListener("click", async event => {
-    if (state.settingsDirty && !window.confirm("有未保存设置。恢复免费功能将重新加载已保存配置，是否继续？")) return;
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const result = await api("/api/features/restore", {method:"POST",body:{}});
-      state.settingsDirty = false;
-      renderFeatureHealth(result.features);
-      showToast(`免费功能已开启 · 新建 ${result.research_drafts_created} 份研究草稿 · 未修改持仓`, "success");
-      await refreshDashboard({silent:true});
-    } catch (error) {showToast(error.message,"error");}
-    finally {button.disabled=false;}
-  });
+  document.getElementById("settings-health-refresh").addEventListener("click", refreshFeatureHealth);
+  document.getElementById("settings-diagnostics").addEventListener("click",()=>openSettingsDiagnostics());
+  document.querySelectorAll("[data-settings-target]").forEach(button=>button.addEventListener("click",()=>{
+    const target=button.dataset.settingsTarget;
+    if (target === "social") return openSocialWebSettings();
+    if (target === "indices") {
+      setView("indices");
+      const manage=document.getElementById("indices-manage");
+      if(manage.getAttribute("aria-expanded") !== "true")manage.click();
+      return;
+    }
+    const selector={backtest:"#research-backtest-nav",valuation:'#research-tabs [data-tab="valuation"]',forward:'#backtest-tabs [data-tab="forecasts"]'}[target];
+    if (selector) document.querySelector(selector).click();
+  }));
   document.querySelectorAll("[data-ui-icon]").forEach(node => node.replaceChildren(uiIcon(node.dataset.uiIcon)));
   document.querySelectorAll(".close-dialog").forEach(button => {
     button.replaceChildren(uiIcon("x"));
@@ -3902,7 +4730,9 @@ function bindControls() {
   loadPortfolioSortPreferences();
   bindPulseSortControl();
   document.getElementById("add-position-button").addEventListener("click", openPositionDialog);
+  document.getElementById("position-form").elements.registration_mode.addEventListener("change", updatePositionRegistration);
   document.getElementById("portfolio-refresh-button").addEventListener("click", refreshPortfolioQuotes);
+  document.getElementById("portfolio-export-button").addEventListener("click", exportPortfolioSnapshot);
   document.getElementById("portfolio-clear-button").addEventListener("click", () => removePortfolioPosition());
   document.getElementById("position-market").addEventListener("change", (event) => {
     const form = document.getElementById("position-form");
@@ -3910,6 +4740,7 @@ function bindControls() {
     form.elements.name.value = "";
     form.elements.fund_type.value = "";
     updatePositionFormMarket(event.target.value);
+    syncPositionWhitelist();
   });
   document.getElementById("fund-search-button").addEventListener("click", searchFunds);
   document.getElementById("fund-search-query").addEventListener("input", (event) => {
@@ -3959,6 +4790,9 @@ function bindControls() {
       syncPortfolioChartPeriodControls();
       loadPortfolioChart();
     });
+  });
+  document.getElementById("portfolio-chart-candle-interval").addEventListener("change", (event) => {
+    selectPortfolioChartInterval(event.target.value);
   });
   document.getElementById("portfolio-chart-retry").addEventListener("click", () => loadPortfolioChart());
   document.getElementById("portfolio-chart-periods").addEventListener("click", (event) => {
@@ -4011,15 +4845,21 @@ function bindControls() {
   document.getElementById("trump-refresh-button").addEventListener("click", runTrumpRefresh);
   document.getElementById("x-token-save-button").addEventListener("click", saveXToken);
   document.getElementById("x-token-clear-button").addEventListener("click", clearXToken);
+  document.getElementById("analysis-key-save").addEventListener("click", () => saveAnalysisCredential());
+  document.getElementById("analysis-key-clear").addEventListener("click", () => saveAnalysisCredential(true));
   document.getElementById("auto-toggle").addEventListener("change", (event) => toggleAuto(event.target.checked));
-  document.getElementById("manual-news-button").addEventListener("click", () => document.getElementById("manual-dialog").showModal());
-  document.getElementById("add-stock-button").addEventListener("click", () => document.getElementById("stock-dialog").showModal());
+  document.getElementById("manual-news-button").addEventListener("click", () => {
+    if (state.dashboard) renderManualWatchlist(state.dashboard);
+    document.getElementById("manual-dialog").showModal();
+  });
+  document.getElementById("add-stock-button").addEventListener("click", () => window.StockWatchlist?.open());
   document.getElementById("news-search").addEventListener("input", applyNewsFilters);
   document.getElementById("news-sort").addEventListener("change", event => {
     state.newsSort = event.target.value;
     applyNewsFilters();
   });
   document.getElementById("connection-retry").addEventListener("click", () => refreshDashboard({ silent: true }));
+  document.getElementById("refresh-version-button").addEventListener("click", () => window.location.reload());
   document.getElementById("news-language").addEventListener("change", event => {
     state.newsLanguage = event.target.value;
     state.liveNews = null;
@@ -4052,9 +4892,13 @@ function bindControls() {
 }
 
 function updateClock() {
-  document.getElementById("local-clock").textContent = new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  }).format(new Date());
+  const now = new Date();
+  const time = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).format(now);
+  const headerClock = document.getElementById("header-clock");
+  headerClock.textContent = `${time} UTC+8`;
+  headerClock.dateTime = now.toISOString();
 }
 
 async function init() {
@@ -4062,11 +4906,14 @@ async function init() {
   bindForms();
   bindControls();
   if (typeof initWorkbench === "function") initWorkbench();
+  window.Briefings?.init();
   if (typeof initIndexMonitor === "function") initIndexMonitor();
   document.querySelectorAll("[data-instrument-target]").forEach(title => title.after(instrumentBriefNode(title.dataset.instrumentTarget)));
   const positionForm = document.getElementById("position-form");
   positionForm.addEventListener("input", positionFormBrief);
   positionForm.addEventListener("change", positionFormBrief);
+  positionForm.addEventListener("input", syncPositionWhitelist);
+  positionForm.addEventListener("change", syncPositionWhitelist);
   document.getElementById("manual-watch-select").addEventListener("change", event => briefAfterTitle("manual-watch-select", event.target.value));
   updateClock();
   window.setInterval(updateClock, 1000);
@@ -4077,9 +4924,10 @@ async function init() {
   refreshAssets();
   refreshNews();
   if (state.currentView === "research") refreshResearch({silent:true});
+  if (state.currentView === "backtest") window.refreshBacktest?.();
   if (state.currentView === "social") refreshSocial({silent:true});
   if (state.currentView === "settings") refreshFeatureHealth();
-  if (state.currentView === "indices" && typeof refreshIndices === "function") refreshIndices();
+  if (["overview", "indices"].includes(state.currentView) && typeof refreshIndices === "function") refreshIndices();
   window.setInterval(() => {
     if (document.visibilityState === "visible") refreshInstrumentEarnings();
   }, 60000);
@@ -4091,10 +4939,10 @@ async function init() {
   }, 1000);
   window.setInterval(() => {
     if (document.visibilityState === "visible" && !state.scanPoller) refreshDashboard({ silent: true });
-    if (document.visibilityState === "visible" && state.currentView === "indices" && typeof refreshIndices === "function") refreshIndices({silent: true});
-  }, 15000);
+    if (document.visibilityState === "visible" && ["overview", "indices"].includes(state.currentView) && typeof refreshIndices === "function") refreshIndices({silent: true});
+  }, 10000);
   window.setInterval(() => {
-    if (!state.assetPoller) refreshAssets({ silent: true });
+    if (document.visibilityState === "visible" && ["overview", "assets"].includes(state.currentView) && !state.assetPoller) refreshAssets({ silent: true });
   }, ASSET_UI_POLL_MS);
   state.koreaStockPoller = window.setInterval(() => {
     if (document.visibilityState === "visible" && state.currentView === "korea-stocks") {

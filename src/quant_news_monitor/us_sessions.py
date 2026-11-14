@@ -91,6 +91,7 @@ def us_quote_fields(result: dict, *, now: datetime | None = None) -> dict:
         "price": price, "quote_time": iso_utc(datetime.fromtimestamp(timestamp, tz=timezone.utc)),
         "previous_close": baseline, "change_pct": daily_change,
         "regular_price": regular_price, "regular_quote_time": iso_utc(datetime.fromtimestamp(regular_time, tz=timezone.utc)) if regular_time else None,
+        "regular_previous_close": prior_close if regular_time and regular_start and regular_time >= regular_start else None,
         "extended_change_pct": extended_change, "session_change_pct": extended_change if quote_session in {"pre", "post"} else daily_change,
         "market_session": active, "quote_session": quote_session, "session_periods": periods,
         "price_label": f"{SESSION_LABELS[quote_session]}价", "status": status,

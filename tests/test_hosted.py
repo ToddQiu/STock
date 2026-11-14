@@ -7,12 +7,16 @@ from http.client import HTTPConnection
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+import importlib.util
 
 from quant_news_monitor.hosted import (
     HostedServer, HostedState, create_access_key, initialize_workspace, read_access_key, validate_origin,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("hosted_deploy_checks", ROOT / "deploy/manage.py")
+checks = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(checks)
 
 
 class HostedInitializationTests(unittest.TestCase):
@@ -131,21 +135,26 @@ class HostedRoutesTests(unittest.TestCase):
         for marker in (b'data-view-target="portfolio"', b'data-view-target="signals"',
                        b'data-view-target="social"', b'data-view-target="assets"',
                        b'data-view-target="indices"', b'data-view-target="settings"',
-                       b'data-tab="etf"', b'data-tab="earnings"', b'data-tab="fundamentals"'):
+                       b'data-tab="etf"', b'data-tab="earnings"', b'id="research-fundamentals-panel"'):
             self.assertIn(marker, body)
         self.assertEqual(headers["X-Frame-Options"], "DENY")
-        for path in ("/app.js", "/startup_memory.js", "/research.js", "/earnings.js", "/social.js",
-                     "/workbench.js", "/indices.js", "/annotations.js", "/styles.css", "/icons.svg"):
+        for path in (*checks.UI_PATHS, "/icons.svg"):
             with self.subTest(path=path):
+                self.assertEqual(self.request(path, overrides={"Authorization": None})[0], 401)
                 self.assertEqual(self.request(path)[0], 200)
-        for path in ("/api/dashboard", "/api/news", "/api/social", "/api/assets", "/api/indices",
-                     "/api/features", "/api/fundamentals", "/api/research", "/api/research/inputs",
-                     "/api/research/cards", "/api/research/companies", "/api/research/earnings",
-                     "/api/research/earnings/annotations"):
+        for path in checks.API_PATHS:
             with self.subTest(path=path):
+                self.assertEqual(self.request(path, overrides={"Authorization": None})[0], 401)
                 status, _, data = self.request(path)
                 self.assertEqual(status, 200, data.decode())
                 self.assertIsInstance(json.loads(data), dict)
+
+    def test_hosted_assistant_cannot_load_desktop_model_or_answer_jobs(self):
+        with patch.object(self.state.assistant, "submit") as submit:
+            self.assertEqual(self.request("/api/assistant/status")[0], 403)
+            self.assertEqual(self.request("/api/assistant/status", overrides={"Authorization": None})[0], 401)
+            self.assertEqual(self.request("/api/assistant/ask", "POST", {"question": "What is a backtest?"})[0], 403)
+            submit.assert_not_called()
 
     def test_writes_reach_real_portfolio_and_research_not_a_static_mock(self):
         with patch.object(self.state.portfolio_monitor, "trigger_refresh"):
@@ -157,6 +166,13 @@ class HostedRoutesTests(unittest.TestCase):
             saved = self.state.config_store.read()["portfolio"]
             self.assertEqual(saved["positions"][0]["quantity"], 2)
             self.assertEqual(saved["principal_cny"], 1000)
+            status, _, data = self.request("/api/portfolio/risk", "POST", {
+                "market": "US", "symbol": "MU", "risk_settings": {"stop_price": 80, "weight_max_pct": 40}})
+            self.assertEqual(status, 200, data.decode())
+            self.assertEqual(json.loads(data)["item"]["risk_settings"]["stop_price"], 80)
+            self.assertFalse(self.state.portfolio_monitor.snapshot()["risk"]["system_notifications_available"])
+            self.assertEqual(self.request("/api/portfolio/risk", "POST", {}, {"Authorization": None})[0], 401)
+            self.assertEqual(self.request("/api/portfolio/risk", "POST", {}, {"Origin": "https://evil.example"})[0], 403)
             self.assertEqual(self.request("/api/portfolio/positions/US/MU", "DELETE", {})[0], 200)
             self.assertEqual(self.state.config_store.read()["portfolio"]["positions"], [])
         self.assertEqual(self.request("/api/research/export")[0], 200)

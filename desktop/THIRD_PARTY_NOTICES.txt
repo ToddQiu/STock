@@ -1,0 +1,19 @@
+STock desktop distribution
+
+Electron / Chromium: see LICENSE and LICENSES.chromium.html at the distribution root.
+Python and bundled Python dependencies: see licenses/ and the backend distribution.
+PyInstaller: GPL with its bootloader distribution exception; see licenses/pyinstaller/.
+Node.js and its bundled dependencies: see licenses/Node-LICENSE.txt.
+Microsoft Visual C++ runtime DLLs are included as application-local runtime dependencies.
+Transformers.js, ONNX Runtime, and other JavaScript dependencies retain their license files under resources/app/translation_runtime/node_modules/.
+
+English-to-Chinese translation:
+Helsinki-NLP/opus-mt-en-zh, OPUS-MT (Apache-2.0), with ONNX quantized weights from Xenova/opus-mt-en-zh.
+https://huggingface.co/Helsinki-NLP/opus-mt-en-zh
+https://huggingface.co/Xenova/opus-mt-en-zh
+The original model cards and Apache-2.0 license are included in licenses/.
+No STock fine-tuning or modification of the bundled model/tokenizer weights has been performed.
+
+Public news and market-data content is obtained at runtime, not redistributed in this package.
+It remains subject to each source's terms, availability, attribution and usage restrictions.
+Bundled components do not imply endorsement by their authors or data providers.

@@ -1,0 +1,14 @@
+.pw-skills-dialog { width: min(920px, calc(100vw - 32px)); font-family: var(--font-ui); }
+.pw-skills-dialog form { max-height: calc(100dvh - 64px); overflow-y: auto; gap: 12px; }
+.pw-skills-dialog h2 { margin: 0; font-size: 18px; }
+.pw-skills-dialog .form-note { margin: 0; font-size: 11px; }
+.pw-skills-dialog [data-error]:empty { display: none; }
+.pw-skills-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 8px 0; }
+.pw-skills-sections section { min-width: 0; display: grid; gap: 6px; }
+.pw-skills-sections textarea { width: 100%; resize: vertical; height: clamp(160px, 28vh, 240px); min-height: 140px; padding: 12px; font: 400 14px/1.6 var(--font-ui); }
+.pw-skills-sections small { color: var(--muted); font-size: 12px; }
+.pw-skill-upload { position: relative; overflow: hidden; cursor: pointer; }
+.pw-skill-upload input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.pw-skill-upload:focus-within { outline: 2px solid var(--info); outline-offset: 2px; }
+@media (max-width: 680px) { .pw-skills-sections { grid-template-columns: 1fr; } }
+.pw-skills-dialog .pw-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

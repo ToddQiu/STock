@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import copy
+import gzip
 import hashlib
 import json
 import math
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -17,7 +19,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from .assistant import Assistant
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .analyzers import select_analyzer
 from .adr_monitor import HynixAdrMonitor
@@ -31,9 +34,15 @@ from .market_scanner import MarketMovementScanner, MovementRunSummary
 from .models import iso_utc, news_event_key, parse_datetime, utc_now
 from .monitor import NewsMonitor, RunSummary
 from .portfolio_monitor import PortfolioMonitor, build_portfolio_analysis
+from .portfolio_book import get_portfolio, portfolios, all_positions
 from .startup_cache import SnapshotStore
+from .read_snapshot import ReadSnapshot
 from .us_sessions import build_extended_monitor
-from .portfolio_chart import CHART_MODES, DEFAULT_PERIODS, chart_session_status, fetch_portfolio_chart
+from .portfolio_chart import CHART_MODES, DEFAULT_PERIODS, chart_session_status, fetch_portfolio_chart, build_technical_analysis, normalize_chart_interval, resample_intraday_chart
+from .short_term import analyze_short_term, forecast_duration_minutes
+from .short_term_research import MinuteResearch, target_key
+from .short_term_signals import STRATEGIES, DEFAULT_BENCHMARKS
+from .short_term_models import MODELS
 from .runtime import build_sources
 from .storage import NewsStore
 from .news_translation import NewsTranslator, is_chinese_headline
@@ -41,10 +50,13 @@ from .stock_mentions import matches_stock
 from .social_sentiment import SocialSentimentMonitor
 from .research_ledger import ResearchLedger
 from .etf_research import import_payload
+from . import investment
+from .etf_sources import load_etf
 from .company_landscape import load_company_landscape, seed_company_research
 from .fundamentals import FundamentalMonitor
 from .earnings_calendar import EarningsCalendar
 from .forward_monitor import ForwardMonitor
+from .briefing import BriefingMonitor
 from .trump_monitor import (
     TrumpMonitor,
     apply_trump_factor_to_asset_snapshot,
@@ -71,6 +83,8 @@ MOVEMENT_CORE_STOCKS = (
 
 
 class AppState:
+    portfolio_desktop_notifications = True
+
     def __init__(
         self,
         config_path: str | Path,
@@ -78,6 +92,7 @@ class AppState:
         start_asset_monitor: bool = True,
     ):
         self.config_path = Path(config_path).resolve()
+        self.assistant = Assistant(self.config_path.parent)
         modules = sorted(path for path in Path(__file__).parent.iterdir() if path.suffix in {".py", ".json"})
         manifest = "".join(f"{path.name}:{hashlib.sha256(path.read_bytes()).hexdigest().upper()}\n" for path in modules)
         self.build_id = hashlib.sha256(manifest.encode("utf-8")).hexdigest().upper()
@@ -116,12 +131,25 @@ class AppState:
         self.trump_monitor = TrumpMonitor(self.config_path,ledger=self.research_ledger)
         self.hynix_adr_monitor = HynixAdrMonitor(snapshot_store=self.snapshot_store)
         self.korea_stock_monitor = KoreaStockMonitor(snapshot_store=self.snapshot_store)
-        self.index_monitor = IndexMonitor(snapshot_store=self.snapshot_store)
-        self.portfolio_monitor = PortfolioMonitor(str(self.config_path), snapshot_store=self.snapshot_store)
-        self.social_monitor = SocialSentimentMonitor(self.config_path,ledger=self.research_ledger, trump_snapshot=self.trump_monitor.snapshot)
+        self.index_monitor = IndexMonitor(snapshot_store=self.snapshot_store, config_store=self.config_store)
+        self.portfolio_monitor = PortfolioMonitor(str(self.config_path), snapshot_store=self.snapshot_store,
+                                                  system_notifications_allowed=self.portfolio_desktop_notifications)
+        self.social_monitor = SocialSentimentMonitor(self.config_path,ledger=self.research_ledger, trump_snapshot=self.trump_monitor.snapshot,
+                                                    news_health=lambda: self.last_run if self.auto_enabled else None)
         self.forward_monitor = ForwardMonitor(self.config_path,self.research_ledger,lambda:self.assets_snapshot(for_research=True))
+        self.minute_research = MinuteResearch(load_config(self.config_path).storage.database.parent / 'minute-research.db',
+                                              self.portfolio_chart, context_provider=self.short_term_context)
         self.fundamental_monitor = FundamentalMonitor(self.config_path, self.research_ledger, self.company_landscape["companies"])
         self.earnings_calendar = EarningsCalendar(load_config(self.config_path).storage.database, self.config_store)
+        from .briefing_editorial import fetch_week_calendar
+        self.briefing_monitor = BriefingMonitor(self.config_path, self.briefing_context, week_calendar_fetcher=fetch_week_calendar)
+        from .instrument_analysis import InstrumentAnalysis
+        self.instrument_analysis = InstrumentAnalysis(self)
+        from .movement_investigation import MovementInvestigation
+        self.movement_investigation = MovementInvestigation(self)
+        from .portfolio_research import PortfolioResearch
+        self.portfolio_research = PortfolioResearch(self)
+        self._portfolio_researches = {"default": self.portfolio_research}
         self._scheduler.start()
         if start_asset_monitor:
             self.translator.start()
@@ -133,15 +161,196 @@ class AppState:
             self.portfolio_monitor.start()
             self.social_monitor.start()
             self.forward_monitor.start()
+            self.minute_research.start()
             self.fundamental_monitor.start()
             self.earnings_calendar.start()
+            self.briefing_monitor.start()
 
-    def dashboard(self) -> dict[str, Any]:
+    def briefing_context(self):
+        """Refresh news once, then collect bounded, attributed inputs off the UI thread."""
+        result = {"news": [], "events": [], "earnings": [], "errors": []}
+        self.trigger_scan()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not self._stop_event.wait(.2):
+            with self._lock:
+                if not self.scan_in_progress:
+                    break
+        with self._lock:
+            run = copy.deepcopy(self.last_run or {})
+            collecting = self.scan_in_progress
+        result["news_last_scan_at"] = run.get("finished_at")
+        if collecting:
+            result["errors"].append("新闻刷新尚未完成，本期采用已采集且通过时间校验的记录")
+        elif run.get("errors"):
+            result["errors"].append("部分新闻来源刷新失败，覆盖可能不完整")
+        store = NewsStore(load_config(self.config_path).storage.database)
+        for name, reader in (("news", lambda: store.recent_news(10000)),
+                             ("events", lambda: store.latest_market_movements(200))):
+            try:
+                result[name] = reader()
+            except Exception as exc:
+                result["errors"].append(f"{name}读取失败：{type(exc).__name__}")
+        try:
+            calendar = self.earnings_calendar.query(days="7", scope="all", limit=10000)
+            result["earnings"] = calendar["items"]
+            if calendar["runtime"].get("stale"):
+                result["errors"].append("财报日程为上次缓存，日期待核实")
+        except Exception as exc:
+            result["errors"].append(f"财报日程读取失败：{type(exc).__name__}")
+        result["portfolio_snapshot"] = self.portfolio_monitor.snapshot()
+        result["collected_at"] = iso_utc(utc_now())
+        return result
+
+    def get_portfolio_research(self, portfolio_id="default"):
+        get_portfolio(self.config_store.read(), portfolio_id)
+        from .portfolio_research import PortfolioResearch
+        with self._lock:
+            if portfolio_id not in self._portfolio_researches:
+                self._portfolio_researches[portfolio_id] = PortfolioResearch(self, portfolio_id)
+            return self._portfolio_researches[portfolio_id]
+
+    def portfolio_directory(self, raw=None, current=None):
+        raw = self.config_store.read() if raw is None else raw
+        rows, events = [], []
+        for book in portfolios(raw):
+            view = current if current and book["id"] == current["id"] else build_portfolio_analysis(
+                book.get("positions", []), self.portfolio_monitor.snapshot(book["id"]), [], [],
+                principal_cny=book.get("principal_cny"), account=book)
+            rows.append({"id": book["id"], "name": book["name"], "base_currency": view["base_currency"],
+                         "summary": view["summary"], "runtime": view["runtime"], "updated_at": view["runtime"].get("updated_at")})
+            events.extend(view.get("risk", {}).get("events", []))
+        return {"portfolios": rows, "portfolio_risk_events": events}
+
+    def _news_inputs(self, database):
+        def load():
+            store = NewsStore(database)
+            return {"news": store.recent_news(10000), "alerts": store.recent_alerts(10000),
+                    "total_news": store.count_news(), "as_of": iso_utc(utc_now())}
+        with self._lock:
+            if getattr(self, "_news_read_path", None) != database:
+                self._news_read_path = database
+                self._news_read_cache = ReadSnapshot(load)
+            cache = self._news_read_cache
+        return cache.get()
+
+    def invalidate_read_snapshots(self):
+        with self._lock:
+            cache = getattr(self, "_news_read_cache", None)
+        if cache is not None:
+            cache.invalidate()
+
+    def runtime_snapshot(self, portfolio_id="default"):
+        get_portfolio(self.config_store.read(), portfolio_id)
+        with self._lock:
+            runtime = {"auto_enabled": self.auto_enabled, "scan_in_progress": self.scan_in_progress,
+                       "movement_scan_in_progress": self.movement_scan_in_progress,
+                       "last_run": self.last_run, "last_movement_run": self.last_movement_run}
+        snapshot = self.portfolio_monitor.snapshot(portfolio_id)
+        return {"runtime": runtime, "portfolio": {"id": portfolio_id, "runtime": {
+            "refresh_in_progress": snapshot.get("refresh_in_progress", False),
+            "updated_at": snapshot.get("updated_at")}}, "trump": {"runtime": self.trump_monitor.snapshot()["runtime"]}}
+
+    def portfolio_details(self, portfolio_id="default", market=None, symbol=None):
+        account = get_portfolio(self.config_store.read(), portfolio_id)
+        if market is not None or symbol is not None:
+            from .security_master import normalize
+            market, symbol = normalize(market or "", symbol or "")
+            if not any(p["market"] == market and p["symbol"] == symbol for p in account.get("positions", [])):
+                raise ValueError("持仓不存在，请刷新后重试")
+            target = f"{market}:{symbol}"
+            return {"portfolio_id": portfolio_id, "target": target,
+                    "cards": self.research_ledger.position_cards({target})}
+        portfolio = build_portfolio_analysis(account.get("positions", []),
+            self.portfolio_monitor.snapshot(portfolio_id), [], [], account=account)
+        return {"portfolio_id": portfolio_id, "trades": {**portfolio["trades"], "records_loaded": True}}
+
+    def export_portfolio(self, portfolio_id="default"):
+        from .portfolio_export import build_workbook
+        captured_at = utc_now()
+        raw = self.config_store.read()
+        account = get_portfolio(raw, portfolio_id)
+        snapshot = self.portfolio_monitor.snapshot(portfolio_id)
+        kind = lambda name: name if portfolio_id == "default" else name + ":" + portfolio_id
+        with self._lock:
+            research = self._portfolio_researches.get(portfolio_id)
+        if research is not None:
+            with research.lock:
+                peers = copy.deepcopy(research.data.get("peers", []))
+        else:
+            saved = self.research_ledger.inputs(kind("portfolio_research"), limit=1)["items"]
+            peers = saved[0]["payload"].get("peers", []) if saved else []
+        imports = self.research_ledger.inputs(kind("portfolio_research_import"), limit=50)["items"]
+        peers += [row for entry in imports for row in entry["payload"].get("peers", [])]
+        whitelist = raw.get("stock_whitelist", [])
+        targets = {f"{row['market']}:{row['symbol']}" for row in [*account.get("positions", []), *whitelist]}
+        cards = self.research_ledger.position_cards(targets)
+        return build_workbook(account, snapshot, whitelist, portfolio_id=portfolio_id,
+                              captured_at=captured_at, peers=peers, cards=cards)
+
+    def _portfolio_view(self, account, portfolio_snapshot, scoped_news, watchlist, *, compact=True):
+        portfolio_id = account.get("id", "default")
+        portfolio_positions = list(account.get("positions") or [])
+        portfolio = build_portfolio_analysis(
+            portfolio_positions,
+            portfolio_snapshot,
+            scoped_news,
+            watchlist,
+            principal_cny=account.get("principal_cny"),
+            account=account,
+        )
+        from .stock_profile import watch_quote
+        quote_as_of = utc_now()
+        portfolio.update(id=portfolio_id, name=account.get("name") or "默认组合",
+                         pending_positions=[{**row, "quote": watch_quote(portfolio_snapshot, row, now=quote_as_of)}
+                                            for row in account.get("pending_positions", [])])
+        from .portfolio_workspace import holding_metadata, position_workspace
+        research = self.get_portfolio_research(portfolio_id)
+        with research.lock:
+            peers = copy.deepcopy(research.data.get("peers", []))
+        imports = self.research_ledger.inputs(research.kind("portfolio_research_import"), limit=50)["items"]
+        peers += [r for entry in imports for r in entry["payload"].get("peers", [])]
+        cards = self.research_ledger.position_cards({f"{r['market']}:{r['symbol']}" for r in portfolio["positions"]})
+        holding_now = utc_now()
+        for row in portfolio["positions"]:
+            row.update(holding_metadata(row, portfolio_id, holding_now))
+            row["workspace"] = position_workspace(row, peers, cards)
+            if compact:
+                row["workspace"]["cards"] = [{**{key: card.get(key) for key in ("id", "target", "name", "stance", "version", "horizon")},
+                    **{key: str(card.get(key) or "")[:240] for key in ("business", "facts", "risks")}}
+                    for card in row["workspace"]["cards"]]
+                row["workspace"]["cards_loaded"] = False
+        if compact:
+            portfolio["trades"] = {"summary": portfolio["trades"]["summary"], "records": [], "records_loaded": False}
+        return portfolio
+
+    def portfolio_snapshot(self, portfolio_id="default"):
+        raw = self.config_store.read()
+        account = get_portfolio(raw, portfolio_id)
+        config = load_config(self.config_path)
+        held = {(row['market'], _normalized_stock_symbol(row['symbol'])) for row in account.get('positions', [])}
+        watches = {(w.market, _normalized_stock_symbol(w.symbol)): w for w in config.watchlist if (w.market, _normalized_stock_symbol(w.symbol)) in held}
+        now = utc_now()
+        records = self._news_inputs(config.storage.database)['value']['news']
+        news = []
+        for row in records:
+            watch = watches.get((str(row.get('market')), _normalized_stock_symbol(row.get('symbol'))))
+            if (watch and now - timedelta(hours=config.lookback_hours) <= parse_datetime(str(row.get('published_at') or '')) <= now + timedelta(minutes=5)
+                    and (row.get('source') in {'manual', 'local-inbox'} or matches_stock(f"{row.get('title','')} {row.get('news_summary','')}", watch))):
+                news.append(row)
+        posts = self.trump_monitor.snapshot()['posts']
+        factors = [{'market':w.market, 'symbol':w.symbol, 'trump_factor':build_trump_factor(posts, market=w.market,
+                    symbol=w.symbol, name=w.name, aliases=w.aliases, include_evidence=False)} for w in watches.values()]
+        portfolio = self._portfolio_view(account, self.portfolio_monitor.snapshot(portfolio_id),
+                                         _deduplicate_records(news, limit=10000), factors)
+        return {'portfolio':portfolio, **self.portfolio_directory(raw, portfolio)}
+
+    def dashboard(self, portfolio_id="default", *, compact=False) -> dict[str, Any]:
         news_as_of = iso_utc(utc_now())
         config = load_config(self.config_path)
         raw = self.config_store.read()
-        portfolio_positions = list((raw.get("portfolio") or {}).get("positions") or [])
-        movement_scope = _build_movement_scope(portfolio_positions, mode=raw.get("movement_scope", "portfolio"))
+        account = get_portfolio(raw, portfolio_id)
+        portfolio_positions = list(account.get("positions") or [])
+        movement_scope = _build_movement_scope(all_positions(raw), mode=raw.get("movement_scope", "portfolio"))
         movement_scope_by_key = {
             (str(item["market"]), _normalized_stock_symbol(item["symbol"])): item
             for item in movement_scope["items"]
@@ -152,10 +361,9 @@ class AppState:
             for item in config.watchlist
         }
         store = NewsStore(config.storage.database)
-        stats = store.dashboard_stats(
-            hours=config.lookback_hours,
-            threshold=config.alert_threshold,
-        )
+        cached_news = self._news_inputs(config.storage.database) if compact else None
+        if cached_news:
+            news_as_of = cached_news["value"]["as_of"]
         trump = self.trump_monitor.snapshot()
         trump_posts = trump["posts"]
         adr_premium = self.hynix_adr_monitor.snapshot()
@@ -167,6 +375,7 @@ class AppState:
                 symbol=item.symbol,
                 name=item.name,
                 aliases=item.aliases,
+                include_evidence=not compact,
             )
             for item in config.watchlist
         }
@@ -206,16 +415,22 @@ class AppState:
                                   or matches_stock(f"{item.get('title', '')} {item.get('news_summary', '')}", watch)))
         scoped_news = [
             item
-            for item in store.recent_news(10000)
+            for item in (cached_news["value"]["news"] if cached_news else store.recent_news(10000))
             if _record_is_watched(item, watched_keys)
             and parse_datetime(str(item.get("published_at") or "")) >= cutoff
             and parse_datetime(str(item.get("published_at") or "")) <= utc_now() + timedelta(minutes=5)
             and relevant_record(item)
         ]
         scoped_news = _deduplicate_records(scoped_news, limit=10000)
+        watch_factors = _watch_news_factors(scoped_news)
+        for watch in watchlist:
+            watch["news_factors"] = self.translator.decorate(watch_factors.get(
+                (watch["market"], _normalized_stock_symbol(watch["symbol"])),
+                {"bullish": [], "bearish": [], "bullish_count": 0, "bearish_count": 0}))
+            watch["news_factors"]["window_hours"] = config.lookback_hours
         scoped_alerts = [
             item
-            for item in store.recent_alerts(10000)
+            for item in (cached_news["value"]["alerts"] if cached_news else store.recent_alerts(10000))
             if _record_is_watched(item, watched_keys)
             and parse_datetime(str(item.get("alert_created_at") or "")) >= cutoff
             and parse_datetime(str(item.get("published_at") or "")) >= cutoff
@@ -224,32 +439,32 @@ class AppState:
         ]
         scoped_alerts = _deduplicate_records(scoped_alerts, limit=10000)
         direction_threshold = 0.04
-        stats.update(
-            {
-                "news_count": len(scoped_news),
-                "bullish": sum(
-                    1
-                    for item in scoped_news
-                    if float(item.get("score") or 0.0) > direction_threshold
-                ),
-                "bearish": sum(
-                    1
-                    for item in scoped_news
-                    if float(item.get("score") or 0.0) < -direction_threshold
-                ),
-                "neutral": sum(
-                    1
-                    for item in scoped_news
-                    if abs(float(item.get("score") or 0.0)) <= direction_threshold
-                ),
-                "direction_threshold": direction_threshold,
-                "alert_count": len(scoped_alerts),
-                "last_analyzed_at": max(
-                    (str(item.get("analyzed_at") or "") for item in scoped_news),
-                    default=None,
-                ),
-            }
-        )
+        stats = {
+            "window_hours": config.lookback_hours,
+            "total_news": cached_news["value"]["total_news"] if cached_news else store.count_news(),
+            "news_count": len(scoped_news),
+            "bullish": sum(
+                1
+                for item in scoped_news
+                if float(item.get("score") or 0.0) > direction_threshold
+            ),
+            "bearish": sum(
+                1
+                for item in scoped_news
+                if float(item.get("score") or 0.0) < -direction_threshold
+            ),
+            "neutral": sum(
+                1
+                for item in scoped_news
+                if abs(float(item.get("score") or 0.0)) <= direction_threshold
+            ),
+            "direction_threshold": direction_threshold,
+            "alert_count": len(scoped_alerts),
+            "last_analyzed_at": max(
+                (str(item.get("analyzed_at") or "") for item in scoped_news),
+                default=None,
+            ),
+        }
         news = _attach_trump_factors(
             _deduplicate_records(
                 scoped_news,
@@ -264,13 +479,12 @@ class AppState:
             ),
             trump_factors,
         )
-        portfolio = build_portfolio_analysis(
-            portfolio_positions,
-            self.portfolio_monitor.snapshot(),
-            scoped_news,
-            watchlist,
-            principal_cny=(raw.get("portfolio") or {}).get("principal_cny"),
-        )
+        portfolio_snapshot = self.portfolio_monitor.snapshot(portfolio_id)
+        portfolio = self._portfolio_view(account, portfolio_snapshot, scoped_news, watchlist, compact=compact)
+        from .stock_profile import watch_quote
+        quote_as_of = utc_now()
+        whitelist = [{**row, 'quote': watch_quote(portfolio_snapshot, row, now=quote_as_of)} for row in raw.get('stock_whitelist', [])]
+        directory = self.portfolio_directory(raw, portfolio)
         extended_monitor = build_extended_monitor(portfolio["positions"])
         extended_symbols = {row["symbol"] for row in extended_monitor["rows"] if row["market_session"] in {"pre", "post", "closed"}}
         scoped_movements = []
@@ -290,7 +504,7 @@ class AppState:
             tagged["monitor_source"] = scope_item["source"]
             tagged["monitor_source_label"] = scope_item["source_label"]
             scoped_movements.append(tagged)
-        movements = _attach_trump_to_movements(scoped_movements + extended_monitor["events"], trump_posts)
+        movements = _attach_trump_to_movements(scoped_movements + extended_monitor["events"], trump_posts, include_evidence=not compact)
         movements.sort(key=lambda item: item["intensity_score"], reverse=True)
         latest_movement_scan = max(
             (str(item["scan_id"]) for item in movements),
@@ -340,6 +554,7 @@ class AppState:
             market="GLOBAL",
             symbol="GLOBAL",
             name="Global market",
+            include_evidence=not compact,
         )
         return {
             "generated_at": iso_utc(utc_now()),
@@ -351,6 +566,7 @@ class AppState:
             },
             "news": self.translator.decorate(news),
             "news_as_of": news_as_of,
+            "news_refresh": {key: cached_news[key] for key in ("stale", "refreshing", "error")} if cached_news else {},
             "translation": self.translator.status(),
             "alerts": self.translator.decorate(alerts),
             "movements": self.translator.decorate(movements),
@@ -359,8 +575,10 @@ class AppState:
             "movement_scope": movement_scope,
             "sentiment_by_symbol": sentiment,
             "watchlist": watchlist,
+            "stock_whitelist": whitelist,
             "korea_quotes": korea_quotes,
             "portfolio": portfolio,
+            **directory,
             "trump": self.translator.decorate(trump),
             "settings": {
                 "poll_interval_minutes": config.poll_interval_minutes,
@@ -377,7 +595,8 @@ class AppState:
                 "news_translation_enabled": self.translator.enabled,
                 "fundamentals_enabled": bool(raw.get("fundamentals_enabled", False)),
                 "movement_scope": movement_scope["mode"],
-                "api_key_configured": bool(os.environ.get("OPENAI_API_KEY")),
+                "api_key_configured": bool(getattr(config.analysis, "api_key", None)),
+                "api_credential": self.analysis_credential_status(),
                 "x_api_configured": bool(trump["runtime"]["configured"]),
                 "x_api_credential_source": trump["runtime"]["credential_source"],
                 "auto_monitor_enabled": bool(raw.get("auto_monitor_enabled", False)),
@@ -385,7 +604,43 @@ class AppState:
             "runtime": runtime,
         }
 
-    def news_snapshot(self, *, language: str = "all") -> dict[str, Any]:
+    def short_term_context(self, market, symbol, now):
+        config = load_config(self.config_path)
+        last_run = copy.deepcopy(self.last_run or {})
+        snapshot = {'news_covered': any(w.market == market and w.symbol == symbol for w in config.watchlist),
+                    'news_runtime': {'auto_enabled': self.auto_enabled, 'last_run': last_run},
+                    'news_error': '；'.join(str(error) for error in last_run.get('errors', [])) or None}
+        try:
+            snapshot['news'] = NewsStore(config.storage.database).recent_news(1000, market=market, symbol=symbol)
+        except Exception as exc:
+            snapshot['news_error'] = f'{type(exc).__name__}: {exc}'[:200]
+        try:
+            facts = self.fundamental_monitor.snapshot()
+            snapshot['fundamentals'] = next((row for row in facts['items']
+                                            if market == 'US' and row['symbol'] == symbol), None)
+        except Exception as exc:
+            snapshot['fundamentals_error'] = f'{type(exc).__name__}: {exc}'[:200]
+        return snapshot
+
+    def instrument_news_snapshot(self, market: str, symbol: str) -> dict[str, Any]:
+        """Use the same full news window and relevance rules as holding news_count."""
+        config = load_config(self.config_path)
+        market, symbol = str(market).upper(), _normalized_stock_symbol(symbol)
+        watch = next((w for w in config.watchlist if w.market == market and _normalized_stock_symbol(w.symbol) == symbol), None)
+        if watch is None:
+            raise ValueError("该标的不在新闻监测范围内")
+        now = utc_now()
+        snapshot = self._news_inputs(config.storage.database)
+        records = [row for row in snapshot['value']['news']
+            if str(row.get('market')) == market and _normalized_stock_symbol(row.get('symbol')) == symbol
+            and now - timedelta(hours=config.lookback_hours) <= parse_datetime(str(row.get('published_at') or '')) <= now + timedelta(minutes=5)
+            and (row.get('source') in {'manual', 'local-inbox'} or matches_stock(f"{row.get('title','')} {row.get('news_summary','')}", watch))]
+        news = self.translator.decorate(_deduplicate_records(records, limit=10000))
+        return {'market': market, 'symbol': symbol, 'news': news, 'count': len(news),
+                'generated_at': snapshot['value']['as_of'], 'lookback_hours': config.lookback_hours,
+                'news_refresh': {key: snapshot[key] for key in ('stale', 'refreshing', 'error')}}
+
+    def news_snapshot(self, *, language: str = "all", cached=False) -> dict[str, Any]:
         if language not in {"zh", "all"}:
             raise ValueError("不支持的新闻语言")
         generated_at = iso_utc(utc_now())
@@ -394,7 +649,10 @@ class AppState:
         watches = {(w.market, _normalized_stock_symbol(w.symbol)): w for w in config.watchlist}
         records = []
         source_language = "all" if self.translator.enabled else language
-        for item in NewsStore(config.storage.database).recent_news(400, language=source_language):
+        snapshot = self._news_inputs(config.storage.database) if cached and source_language == "all" else None
+        if snapshot:
+            generated_at = snapshot["value"]["as_of"]
+        for item in (snapshot["value"]["news"][:400] if snapshot else NewsStore(config.storage.database).recent_news(400, language=source_language)):
             if language == "zh" and not self.translator.enabled and not is_chinese_headline(str(item.get("title", "")), str(item.get("source", ""))):
                 continue
             watch = watches.get((str(item.get("market")), _normalized_stock_symbol(item.get("symbol"))))
@@ -407,13 +665,14 @@ class AppState:
                 break
         news = _deduplicate_records(records, limit=160)
         posts = self.trump_monitor.snapshot()["posts"]
-        factors = {(w.market, w.symbol): build_trump_factor(posts, market=w.market, symbol=w.symbol, name=w.name, aliases=w.aliases)
+        factors = {(w.market, w.symbol): build_trump_factor(posts, market=w.market, symbol=w.symbol, name=w.name, aliases=w.aliases, include_evidence=not cached)
                    for w in config.watchlist}
         translated = self.translator.decorate(_attach_trump_factors(news, factors))
         if language == "zh":
             translated = [item for item in translated if is_chinese_headline(str(item.get("title", "")), str(item.get("source", "")))
                           or item.get("title_translation_status") == "translated"]
         return {"generated_at": generated_at, "language": language, "news": translated,
+                "news_refresh": {key: snapshot[key] for key in ("stale", "refreshing", "error")} if snapshot else {},
                 "translation": self.translator.status(),
                 "runtime": {"auto_enabled": self.auto_enabled, "scan_in_progress": self.scan_in_progress,
                             "last_run": self.last_run, "poll_interval_seconds": config.news_interval_seconds,
@@ -476,8 +735,13 @@ class AppState:
         self.portfolio_monitor.trigger_refresh()
         return position
 
-    def remove_position(self, market: str, symbol: str) -> bool:
-        removed = self.config_store.remove_position(market, symbol)
+    def set_position_risk(self, payload: dict[str, Any]) -> dict[str, Any]:
+        position = self.config_store.set_position_risk(payload)
+        self.portfolio_monitor.trigger_refresh()
+        return position
+
+    def remove_position(self, market: str, symbol: str, portfolio_id="default") -> bool:
+        removed = self.config_store.remove_position(market, symbol, portfolio_id)
         if removed:
             self.portfolio_monitor.trigger_refresh()
         return removed
@@ -485,8 +749,8 @@ class AppState:
     def trigger_portfolio_refresh(self) -> None:
         self.portfolio_monitor.trigger_refresh()
 
-    def clear_positions(self) -> int:
-        removed = self.config_store.clear_positions()
+    def clear_positions(self, portfolio_id="default") -> int:
+        removed = self.config_store.clear_positions(portfolio_id)
         if removed:
             self.portfolio_monitor.trigger_refresh()
         return removed
@@ -499,31 +763,81 @@ class AppState:
         }
 
     def portfolio_chart(
+        self, market: str, symbol: str, period: str | None, mode: str = "daily",
+        *, interval: str | None = None,
+    ) -> dict[str, Any]:
+        market, symbol, mode = market.strip().upper(), symbol.strip().upper(), mode.strip().lower()
+        selected = normalize_chart_interval(mode, interval)
+        result = self._portfolio_chart_base(market, symbol, period, mode)
+        retained = bool(result.get("retained_from_cache"))
+        if selected not in {None, "1m"}:
+            work = getattr(self, "_chart_runtime", None)
+            selected_period = (period or DEFAULT_PERIODS.get(mode) or "").strip().lower()
+            result = (work.resample(result, market, symbol, selected_period, selected, resample_intraday_chart)
+                      if work else resample_intraday_chart(result, market, selected))
+        return self._chart_response(result, market, symbol, retained=retained)
+
+    def _portfolio_chart_base(
         self,
         market: str,
         symbol: str,
         period: str | None,
         mode: str = "daily",
     ) -> dict[str, Any]:
+        """Return internal source data; portfolio_chart copies before responding."""
         market, symbol, mode = market.strip().upper(), symbol.strip().upper(), mode.strip().lower()
         key = (market, symbol, mode, (period or DEFAULT_PERIODS.get(mode) or "").strip().lower())
+        ttl = (10 if market == "KR" and symbol == "^KS11" else 20 if (market, symbol) in {("CN", "000688.SS"), ("US", "NQ.CFD")} else 60) if mode == "intraday" else 300
         with self._lock:
+            from concurrent.futures import Future
+            from .chart_cache import ChartWork
+            if not hasattr(self, "_chart_runtime"):
+                self._chart_runtime = ChartWork()
+            work = self._chart_runtime
             cached = self._chart_cache.get(key)
-        if cached and time.monotonic() - cached[0] < (60 if mode == "intraday" else 300):
-            return self._chart_response(cached[1], market, symbol)
+            if cached and time.monotonic() - cached[0] < ttl:
+                return cached[1]
+            pending = work.inflight.get(key)
+            owner = pending is None
+            if owner:
+                pending = work.inflight[key] = Future()
+        if not owner:
+            result, retained = pending.result()
+            return {**result, "retained_from_cache": True} if retained else result
         try:
-            result = fetch_portfolio_chart(market, symbol, period, mode=mode)
-        except (OSError, RuntimeError):
-            if not cached:
-                raise
-            return self._chart_response(cached[1], market, symbol, retained=True)
-        with self._lock:
-            self._chart_cache.pop(key, None)
-            self._chart_cache[key] = (time.monotonic(), copy.deepcopy(result))
-            while len(self._chart_cache) > 16:
-                self._chart_cache.pop(next(iter(self._chart_cache)))
-            self.snapshot_store.save("charts", {"entries": [{"key": list(k), "data": value[1]} for k, value in self._chart_cache.items()]}, force=True)
-        return self._chart_response(result, market, symbol)
+            try:
+                result = copy.deepcopy(fetch_portfolio_chart(market, symbol, period, mode=mode))
+            except (OSError, RuntimeError):
+                if not cached:
+                    raise
+                result, retained = cached[1], True
+            else:
+                retained = False
+            if result.get("kind") != "price_line" and result.get("candles") and "oscillators" not in (result.get("technical") or {}):
+                result = {**result, "technical": build_technical_analysis(result["candles"], mode=result.get("mode", "daily"), is_fund=False)}
+            with self._lock:
+                if not retained:
+                    self._chart_cache.pop(key, None)
+                    self._chart_cache[key] = (time.monotonic(), result)
+                    while len(self._chart_cache) > 16:
+                        self._chart_cache.pop(next(iter(self._chart_cache)))
+                elif self._chart_cache.get(key) is cached:
+                    self._chart_cache[key] = (cached[0], result)
+                pending.set_result((result, retained))
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                work.inflight.pop(key, None)
+        if not retained:
+            # Serialize saves, then capture the latest cache: an older request
+            # cannot overwrite a newer snapshot. Disk I/O never owns _lock.
+            with work.snapshot_lock:
+                with self._lock:
+                    entries = [{"key": list(k), "data": value[1]} for k, value in self._chart_cache.items()]
+                self.snapshot_store.save("charts", {"entries": entries}, force=True)
+        return {**result, "retained_from_cache": True} if retained else result
 
     def _restore_chart_cache(self) -> None:
         entries = (self.snapshot_store.load("charts") or {}).get("entries")
@@ -545,16 +859,21 @@ class AppState:
             rows = data.get("points") if data.get("kind") == "nav" else data.get("candles")
             if not isinstance(rows, list) or not rows or not all(isinstance(row, dict) for row in rows):
                 continue
-            fields = ("nav",) if data.get("kind") == "nav" else ("timestamp", "open", "high", "low", "close")
+            price_line = data.get("kind") == "price_line"
+            if price_line and (key != ["US", "NQ.CFD", "intraday", "1d"] or data.get("symbol") != "NQ.CFD" or data.get("instrument_type") != "CFD"):
+                continue
+            fields = ("nav",) if data.get("kind") == "nav" else ("timestamp", "close") if price_line else ("timestamp", "open", "high", "low", "close")
             if not all(all(isinstance(row.get(field), (float, int)) and math.isfinite(row[field]) and row[field] > 0 for field in fields) for row in rows):
                 continue
-            if data.get("kind") != "nav" and any(row["high"] < max(row["open"], row["close"], row["low"]) or row["low"] > min(row["open"], row["close"]) or row["timestamp"] > time.time() + 60 for row in rows):
+            if data.get("kind") != "nav" and any(row["timestamp"] > time.time() + 60 or (not price_line and (row["high"] < max(row["open"], row["close"], row["low"]) or row["low"] > min(row["open"], row["close"]))) for row in rows):
                 continue
             self._chart_cache[tuple(key)] = (-float("inf"), data)
 
     @staticmethod
     def _chart_response(data: dict, market: str, symbol: str, *, retained: bool = False) -> dict:
         result = copy.deepcopy(data)
+        if result.get("kind") != "price_line" and result.get("candles") and "oscillators" not in (result.get("technical") or {}):
+            result["technical"] = build_technical_analysis(result["candles"], mode=result.get("mode", "daily"), is_fund=False)
         status = chart_session_status(market, symbol, result)
         if status != "unknown":
             result["session_status"] = status
@@ -597,6 +916,7 @@ class AppState:
 
     def feature_status(self) -> dict:
         raw = self.config_store.read()
+        credential = self.analysis_credential_status()
         social = self.social_monitor.snapshot()
         translation = self.translator.status()
         trump = self.trump_monitor.snapshot()["runtime"]
@@ -614,14 +934,14 @@ class AppState:
              "detail": fundamentals["error"] or "SEC 年度财报 · 每6小时检查 · A/H/K与非上市机构未覆盖"},
             {"id": "movements", "name": "市场异动", "state": "running" if self.auto_enabled else "disabled",
              "detail": "A股/港股/美股公开扫描 + 三星/海力士" if raw.get("movement_scope") == "all" else "持仓 + 三星/海力士"},
-            {"id": "portfolio", "name": "持仓与盘前盘后", "state": "ready" if (raw.get("portfolio") or {}).get("positions") else "empty",
+            {"id": "portfolio", "name": "持仓与盘前盘后", "state": "ready" if all_positions(raw) else "empty",
              "detail": "随录入持仓启用；不会恢复已删除仓位"},
             {"id": "social", "name": "公开社交情绪", "state": "running" if social["runtime"]["enabled"] else "disabled",
              "detail": f"已连接 {social['runtime']['web_connected_count']} 个公开源 · 24小时明确观点 {social['summary']['web_directional_count']} 条"},
             {"id": "trump", "name": "Trump 公开信息与政策因子", "state": "running" if trump["connected"] else "error" if trump["errors"] else "waiting" if trump.get("public_enabled") else "error" if trump["configured"] else "blocked",
              "detail": trump["message"]},
-            {"id": "model", "name": "大模型分析", "state": "ready" if os.environ.get("OPENAI_API_KEY") else "blocked",
-             "detail": "已有密钥，实际分析引擎以采集结果为准" if os.environ.get("OPENAI_API_KEY") else "缺少 OPENAI_API_KEY；本地规则仍在运行，不冒充模型结果"},
+            {"id": "model", "name": "大模型分析", "state": "disabled" if (raw.get("analysis") or {}).get("mode") == "rules" else "ready" if credential["configured"] else "blocked",
+             "detail": credential["error"] or ("已有密钥，连接是否成功以实际报告为准；规则模式不会调用模型" if credential["configured"] else "尚未配置模型密钥，可在分析与来源中填写；本地规则仍可使用")},
             {"id": "forward", "name": "前向研究记录", "state": "error" if self.forward_monitor.error else "running" if self.forward_monitor.settings()["enabled"] else "disabled",
              "detail": self.forward_monitor.error or "黄金/BTC前向记录；分数未经概率校准，不下单"},
             {"id": "notifications", "name": "系统异动提醒", "state": "running" if assets["system_notifications_enabled"] and assets["system_notifications_available"] else "disabled",
@@ -698,16 +1018,43 @@ class AppState:
             raise ValueError("请输入 X API Bearer Token")
         self.trump_monitor.save_token(token)
 
+    def analysis_credential_status(self):
+        from .ai_credentials import OpenAICredentials
+        return OpenAICredentials(self.config_path).status()
+
+    def update_analysis_credential(self, payload):
+        from .ai_credentials import OpenAICredentials
+        if not isinstance(payload, dict) or set(payload) not in ({"api_key"}, {"clear"}):
+            raise ValueError("密钥设置字段无效")
+        store = OpenAICredentials(self.config_path)
+        try:
+            if "clear" in payload:
+                if payload["clear"] is not True:
+                    raise ValueError("清除密钥须明确确认")
+                store.clear()
+            else:
+                store.save(payload["api_key"])
+        except (OSError, RuntimeError):
+            raise ValueError("本机密钥无法保存或读取，请在当前 Windows 账户重试") from None
+        return store.status()
+
     def shutdown(self) -> None:
         self._stop_event.set()
+        self.instrument_analysis.shutdown()
+        self.movement_investigation.shutdown()
+        self.briefing_monitor.shutdown()
+        self.assistant.shutdown()
         self.translator.shutdown()
         self.forward_monitor.shutdown()
+        self.minute_research.shutdown()
         self.asset_monitor.shutdown()
         self.trump_monitor.shutdown()
         self.hynix_adr_monitor.shutdown()
         self.korea_stock_monitor.shutdown()
         self.index_monitor.shutdown()
         self.portfolio_monitor.shutdown()
+        for research in list(self._portfolio_researches.values()):
+            research.shutdown()
         self.social_monitor.shutdown()
         self.fundamental_monitor.shutdown()
         self.earnings_calendar.shutdown()
@@ -729,6 +1076,7 @@ class AppState:
                 config.analysis.mode,
                 config.analysis.model,
                 watchlist=config.watchlist,
+                api_key=getattr(config.analysis, "api_key", None),
             )
             monitor = NewsMonitor(
                 config,
@@ -756,6 +1104,7 @@ class AppState:
                 interval = load_config(self.config_path).news_interval_seconds
             except Exception:
                 interval = 60
+            self.invalidate_read_snapshots()
             with self._lock:
                 self.last_run = result
                 self.scan_in_progress = False
@@ -774,13 +1123,14 @@ class AppState:
     def _run_movement_scan(self) -> None:
         started_at = utc_now()
         raw = self.config_store.read()
-        movement_scope = _build_movement_scope(list((raw.get("portfolio") or {}).get("positions") or []), mode=raw.get("movement_scope", "portfolio"))
+        movement_scope = _build_movement_scope(all_positions(raw), mode=raw.get("movement_scope", "portfolio"))
         try:
             config = load_config(self.config_path)
             analyzer, analyzer_message = select_analyzer(
                 config.analysis.mode,
                 config.analysis.model,
                 watchlist=config.watchlist,
+                api_key=getattr(config.analysis, "api_key", None),
             )
             focus_symbols = _movement_focus_symbols(movement_scope)
             summary = MarketMovementScanner(
@@ -929,6 +1279,7 @@ def _attach_trump_factors(
 def _attach_trump_to_movements(
     movements: list[dict[str, Any]],
     posts: list[dict[str, Any]],
+    *, include_evidence: bool = True,
 ) -> list[dict[str, Any]]:
     attached = []
     for movement in movements:
@@ -939,6 +1290,7 @@ def _attach_trump_to_movements(
             symbol=str(item.get("symbol", "")),
             name=str(item.get("name", "")),
             sector=str(item.get("sector", "")),
+            include_evidence=include_evidence,
         )
         base_confidence = float(item.get("confidence") or 0.0)
         direction = 1.0 if float(item.get("change_pct") or 0.0) > 0 else -1.0
@@ -955,6 +1307,26 @@ def _attach_trump_to_movements(
         item["trump_factor"] = factor
         attached.append(item)
     return attached
+
+
+def _watch_news_factors(records: list[dict]) -> dict:
+    grouped = {}
+    for record in sorted(records, key=lambda row: str(row.get("published_at") or ""), reverse=True):
+        metadata = record.get("analysis_metadata") or {}
+        if (record.get("evidence_status") or metadata.get("evidence_status")) != "supported" or metadata.get("direction_eligible") is False:
+            continue
+        score = record.get("score")
+        if not isinstance(score, (int, float)) or not math.isfinite(score) or abs(score) <= 0.04:
+            continue
+        if not (record.get("impact_reason") or record.get("analysis_summary")):
+            continue
+        key = (record.get("market"), _normalized_stock_symbol(record.get("symbol", "")))
+        result = grouped.setdefault(key, {"bullish": [], "bearish": [], "bullish_count": 0, "bearish_count": 0})
+        side = "bullish" if score > 0 else "bearish"
+        result[side + "_count"] += 1
+        if len(result[side]) < 3:
+            result[side].append(record)
+    return grouped
 
 
 def _combine_sentiment_with_trump(
@@ -1076,14 +1448,29 @@ def _serialize_movement_run(
 
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
+    # Windows SO_REUSEADDR permits multiple live servers on one port, routing
+    # requests to an old instance even after a new version reports startup.
+    allow_reuse_address = os.name != "nt"
+    # Cold page loads and multiple team clients burst beyond the default backlog of five.
+    request_queue_size = 128
 
     def __init__(self, address: tuple[str, int], app_state: AppState):
         super().__init__(address, DashboardHandler)
         self.app_state = app_state
 
+    def server_bind(self):
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
 
 class DashboardHandler(BaseHTTPRequestHandler):
     server: DashboardServer
+
+    def _local_assistant(self) -> bool:
+        return (type(self.server) is DashboardServer
+                and self.server.server_address[0] in {"127.0.0.1", "::1"}
+                and self.client_address[0] in {"127.0.0.1", "::1"})
 
     def _trusted_request(self) -> bool:
         try:
@@ -1104,6 +1491,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self._trusted_request():
             return
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/assistant/"):
+            if not self._local_assistant():
+                self._send_json({"available": False, "error": "本地助手仅在桌面本机服务启用"}, status=HTTPStatus.FORBIDDEN)
+                return
+            try:
+                if parsed.path == "/api/assistant/status":
+                    self._send_json({"available": True, **self.server.app_state.assistant.status()})
+                elif parsed.path.startswith("/api/assistant/jobs/"):
+                    self._send_json(self.server.app_state.assistant.get(parsed.path.rsplit("/", 1)[1]))
+                else:
+                    self._send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path in {"/api/investment", "/api/investment/export"}:
+            query = parse_qs(parsed.query)
+            portfolio_id = (query.get("portfolio_id") or ["default"])[0]
+            try:
+                get_portfolio(self.server.app_state.config_store.read(), portfolio_id)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            rows = investment.plans(self.server.app_state.research_ledger, include_archived=True, portfolio_id=portfolio_id)
+            if parsed.path.endswith("/export"):
+                identifier = (query.get("id") or [""])[0]
+                row = next((r for r in rows if r["plan"]["id"] == identifier), None)
+                if row is None:
+                    self._send_json({"error": "方案不存在"}, status=HTTPStatus.NOT_FOUND)
+                else:
+                    self._send_json({"format": "stock-investment-plan", "plan": row["plan"]}, download_name="STock-investment-plan.json")
+            else:
+                self._send_json({"items": rows})
+            return
         if parsed.path.startswith("/api/research"):
             try:
                 state = self.server.app_state
@@ -1120,8 +1540,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         return
                 elif parsed.path == "/api/research/companies":
                     result = state.company_research()
+                elif parsed.path == "/api/research/etf":
+                    result = load_etf(state.research_ledger, value("symbol", ""))
                 elif parsed.path == "/api/research/cards":
                     result = state.research_ledger.cards(search=value("search", ""), stance=value("stance", "all"), offset=int(value("offset", 0)))
+                elif parsed.path == "/api/research/valuations":
+                    result = state.research_ledger.valuations(offset=int(value("offset", 0)))
                 elif parsed.path == "/api/research/inputs":
                     result = state.research_ledger.inputs(value("kind","all"),offset=int(value("offset",0)))
                     for item in result["items"]:
@@ -1167,13 +1591,114 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
+        if parsed.path == "/api/portfolios":
+            try:
+                self._send_json(self.server.app_state.portfolio_directory())
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/portfolio/records":
+            try:
+                identifier = (parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]
+                self._send_json(self.server.app_state.config_store.portfolio_records(identifier))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/movements/investigation":
+            query = parse_qs(parsed.query)
+            try:
+                self._send_json(self.server.app_state.movement_investigation.snapshot(
+                    (query.get("market") or [""])[0], (query.get("symbol") or [""])[0],
+                    (query.get("movement_signature") or [""])[0]))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path in {"/api/analysis-skills", "/api/briefing-skills"}:
+            if not self._local_assistant():
+                self._send_json({"error": "Skill 仅在本机管理"}, status=HTTPStatus.FORBIDDEN)
+            else:
+                from .analysis_skills import read_skills
+                self._send_json(read_skills(self.server.app_state.config_store,
+                                           'briefing' if parsed.path == '/api/briefing-skills' else 'analysis'))
+            return
+        if parsed.path == "/api/portfolio/instrument-analysis":
+            try:
+                identifier = (parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]
+                self._send_json(self.server.app_state.instrument_analysis.snapshot(identifier))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path in {"/api/portfolio/instrument-analysis.pdf", "/api/portfolio/instrument-analysis/portfolio.pdf"}:
+            query = parse_qs(parsed.query)
+            identifier = (query.get("portfolio_id") or ["default"])[0]
+            analysis = self.server.app_state.instrument_analysis
+            try:
+                if parsed.path.endswith("/portfolio.pdf"):
+                    filename, content = analysis.export_portfolio_pdf(identifier)
+                else:
+                    filename, content = analysis.export_pdf(identifier, (query.get("target") or [""])[0],
+                                                            (query.get("generated_at") or [None])[0])
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except (OSError, RuntimeError, ImportError):
+                self._send_json({"error": "AI 分析 PDF 暂时无法导出，请稍后重试"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self._send_attachment(filename, content, "application/pdf", "STock-AI-analysis.pdf")
+            return
+        if parsed.path == "/api/portfolio/export.xlsx":
+            try:
+                identifier = (parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]
+                filename, content = self.server.app_state.export_portfolio(identifier)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except (OSError, RuntimeError):
+                self._send_json({"error": "组合快照暂时无法导出，请稍后重试"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self._send_xlsx(filename, content)
+            return
+        if parsed.path == "/api/watchlist/whitelist":
+            self._send_json({"items": self.server.app_state.config_store.read().get("stock_whitelist", [])})
+            return
         if parsed.path == "/api/dashboard":
-            self._send_json(self.server.app_state.dashboard())
+            try:
+                query = parse_qs(parsed.query)
+                options = {"compact": True} if query.get("details") == ["0"] else {}
+                self._send_json(self.server.app_state.dashboard((query.get("portfolio_id") or ["default"])[0], **options))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/portfolio/snapshot":
+            try:
+                identifier = (parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]
+                self._send_json(self.server.app_state.portfolio_snapshot(identifier))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path in {"/api/runtime", "/api/portfolio/details"}:
+            try:
+                query = parse_qs(parsed.query)
+                identifier = (query.get("portfolio_id") or ["default"])[0]
+                result = self.server.app_state.runtime_snapshot(identifier) if parsed.path == "/api/runtime" else self.server.app_state.portfolio_details(
+                    identifier, (query.get("market") or [None])[0], (query.get("symbol") or [None])[0])
+                self._send_json(result)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/news/instrument":
+            try:
+                query = parse_qs(parsed.query)
+                self._send_json(self.server.app_state.instrument_news_snapshot(
+                    (query.get('market') or [''])[0], (query.get('symbol') or [''])[0]))
+            except ValueError as error:
+                self._send_json({'error': str(error)}, status=HTTPStatus.BAD_REQUEST)
             return
         if parsed.path == "/api/news":
             try:
                 language = (parse_qs(parsed.query).get("language") or ["all"])[0]
-                self._send_json(self.server.app_state.news_snapshot(language=language))
+                options = {"cached": True} if parse_qs(parsed.query).get("cached") == ["1"] else {}
+                self._send_json(self.server.app_state.news_snapshot(language=language, **options))
             except ValueError as error:
                 self._send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -1185,6 +1710,62 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/fundamentals":
             self._send_json(self.server.app_state.fundamental_monitor.snapshot())
+            return
+        if parsed.path == "/api/securities/resolve":
+            from .security_master import resolve
+            query = parse_qs(parsed.query)
+            try:
+                self._send_json(resolve((query.get("market") or [""])[0], (query.get("symbol") or [""])[0]))
+            except (ValueError, OSError, RuntimeError) as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/portfolio/research":
+            try:
+                self._send_json(self.server.app_state.get_portfolio_research((parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]).snapshot())
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/briefings/pdf":
+            query = parse_qs(parsed.query)
+            try:
+                path = self.server.app_state.briefing_monitor.pdf_file((query.get("id") or [""])[0])
+                content = path.read_bytes()
+            except (KeyError, FileNotFoundError):
+                self._send_json({"error": "PDF尚未生成或文件已移走，请重新导出"}, status=HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except OSError:
+                self._send_json({"error": "PDF暂时无法读取，请重新导出"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            disposition = "attachment" if query.get("download") == ["1"] else "inline"
+            self.send_response(HTTPStatus.OK.value)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Content-Disposition", f"{disposition}; filename=\"STock-briefing.pdf\"; filename*=UTF-8''{quote(path.name, safe='')}")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(content)
+            return
+        if parsed.path in {"/api/briefings", "/api/briefings/report"}:
+            try:
+                query = parse_qs(parsed.query)
+                monitor = self.server.app_state.briefing_monitor
+                result = monitor.get((query.get("id") or [""])[0]) if parsed.path.endswith("/report") else monitor.snapshot(limit=100)
+                self._send_json(result)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/portfolio/backtests":
+            from .backtest_archive import read
+            try:
+                query = parse_qs(parsed.query)
+                research = self.server.app_state.get_portfolio_research((query.get("portfolio_id") or ["default"])[0])
+                self._send_json(read(research, (query.get("id") or [None])[0]))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
         if parsed.path == "/api/assets":
             self._send_json(self.server.app_state.assets_snapshot())
@@ -1204,16 +1785,56 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     status=HTTPStatus.BAD_GATEWAY,
                 )
             return
-        if parsed.path == "/api/portfolio/chart":
+        if parsed.path == '/api/short-term/catalog':
+            self._send_json({'models':MODELS,'strategies':STRATEGIES,'benchmarks':DEFAULT_BENCHMARKS})
+            return
+        if parsed.path in {'/api/short-term/research', '/api/short-term/record'}:
             query = parse_qs(parsed.query)
+            try:
+                research = self.server.app_state.minute_research
+                if parsed.path.endswith('/record'):
+                    result = research.record((query.get('id') or [''])[0])
+                else:
+                    result = research.snapshot((query.get('market') or [''])[0], (query.get('symbol') or [''])[0])
+                self._send_json(result)
+            except ValueError as exc:
+                self._send_json({'error': str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/short-term":
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            market = (query.get("market") or [""])[0].strip().upper()
+            symbol = (query.get("symbol") or [""])[0].strip().upper()
+            mode = (query.get("mode") or ["daily"])[0]
+            try:
+                if market not in {"US", "CN", "HK", "KR"} or mode not in {"daily", "intraday", "forecast"}:
+                    raise ValueError("不支持的研判市场或周期")
+                duration = {}
+                for unit in ('hours', 'minutes'):
+                    if unit in query:
+                        try:
+                            duration[unit] = int(query[unit][0])
+                        except ValueError:
+                            raise ValueError("预测时长须为整数小时或整数分钟") from None
+                if mode == 'forecast':
+                    forecast_duration_minutes(**duration)
+                chart = self.server.app_state.portfolio_chart(market, symbol, "1d", "intraday")
+                self._send_json(analyze_short_term(chart, market, symbol, mode, **duration))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+                self._send_json({"error": f"研判行情暂不可用：{exc}"}, status=HTTPStatus.BAD_GATEWAY)
+            return
+        if parsed.path == "/api/portfolio/chart":
+            query = parse_qs(parsed.query, keep_blank_values=True)
             market = (query.get("market") or [""])[0]
             symbol = (query.get("symbol") or [""])[0]
             period = (query.get("period") or [None])[0]
             mode = (query.get("mode") or ["daily"])[0]
+            interval = (query.get("interval") or [None])[0]
             try:
                 self._send_json(
                     self.server.app_state.portfolio_chart(
-                        market, symbol, period, mode
+                        market, symbol, period, mode, **({"interval": interval} if interval is not None else {})
                     )
                 )
             except ValueError as exc:
@@ -1231,8 +1852,118 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self._trusted_request():
             return
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/assistant/"):
+            if not self._local_assistant():
+                self._send_json({"error": "本地助手不向远程客户端开放"}, status=HTTPStatus.FORBIDDEN)
+                return
+            try:
+                payload = self._read_json(max_length=12_000)
+                if parsed.path == "/api/assistant/ask":
+                    self._send_json(self.server.app_state.assistant.submit(payload), status=HTTPStatus.ACCEPTED)
+                elif parsed.path == "/api/assistant/cancel":
+                    self._send_json(self.server.app_state.assistant.cancel(str(payload.get("id", ""))))
+                else:
+                    self._send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
+            except (ValueError, json.JSONDecodeError) as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
         try:
-            payload = self._read_json(max_length=1_400_000 if parsed.path == "/api/research/etf/import" else 64_000)
+            payload = self._read_json(max_length=1_400_000 if parsed.path in {"/api/research/etf/import", "/api/portfolio/analysis.xlsx"} or parsed.path.startswith("/api/investment/") else 550_000 if parsed.path == "/api/portfolio/research" else 64_000)
+            if parsed.path in {"/api/portfolio/instrument-analysis.pdf", "/api/portfolio/instrument-analysis/portfolio.pdf"}:
+                if not self._local_assistant():
+                    self._send_json({"error": "标的模型分析仅在本机使用"}, status=HTTPStatus.FORBIDDEN)
+                    return
+                identifier = payload.get("portfolio_id")
+                if not isinstance(identifier, str):
+                    raise ValueError("请选择要导出的持仓组合")
+                try:
+                    analysis = self.server.app_state.instrument_analysis
+                    if parsed.path.endswith("/portfolio.pdf"):
+                        filename, content = analysis.export_fresh_portfolio_pdf(identifier)
+                    else:
+                        filename, content = analysis.export_fresh_pdf(identifier, payload.get("target"))
+                except (OSError, RuntimeError, ImportError):
+                    self._send_json({"error": "本轮分析暂时无法导出，请稍后重试"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                self._send_attachment(filename, content, "application/pdf", "STock-AI-analysis.pdf")
+                return
+            if parsed.path == "/api/portfolio/analysis.xlsx":
+                from .portfolio_analysis_export import build_analysis_workbook
+                identifier = payload.get("portfolio_id")
+                requested = (parse_qs(parsed.query).get("portfolio_id") or [identifier])[0]
+                if not isinstance(identifier, str) or requested != identifier:
+                    raise ValueError("导出组合编号不一致，请重新导出")
+                account = get_portfolio(self.server.app_state.config_store.read(), identifier)
+                filename, content = build_analysis_workbook(account, payload, captured_at=utc_now())
+                self._send_xlsx(filename, content)
+                return
+            if parsed.path in {"/api/briefings/settings", "/api/briefings/run", "/api/briefings/export"}:
+                monitor = self.server.app_state.briefing_monitor
+                if parsed.path.endswith("/settings"):
+                    self._send_json(monitor.update_settings(payload))
+                elif parsed.path.endswith("/export"):
+                    try:
+                        result = monitor.export_pdf(payload.get("id", ""))
+                    except KeyError:
+                        self._send_json({"error": "报告不存在"}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    self._send_json(result, status=HTTPStatus.ACCEPTED if result.get("accepted") else HTTPStatus.OK)
+                else:
+                    result = monitor.trigger(payload.get("market", "GLOBAL"), payload.get("kind"), payload.get("date"), refresh=payload.get("refresh", False))
+                    self._send_json(result, status=HTTPStatus.ACCEPTED if result.get("accepted") else HTTPStatus.OK)
+                return
+            if parsed.path.startswith('/api/short-term/'):
+                research = self.server.app_state.minute_research
+                if parsed.path == '/api/short-term/research/settings':
+                    self._send_json(research.configure(payload))
+                    return
+                market, symbol = target_key(payload.get('market',''), payload.get('symbol',''))
+                if parsed.path in {'/api/short-term/predict','/api/short-term/strategies'}:
+                    duration = {unit: payload[unit] for unit in ('hours', 'minutes') if unit in payload}
+                    minutes = forecast_duration_minutes(**duration)
+                    if payload.get('model_id') not in (None,'auto') and payload['model_id'] not in MODELS:
+                        raise ValueError('未知预测策略')
+                    try:
+                        chart = self.server.app_state.portfolio_chart(market,symbol,'1d','intraday')
+                    except (RuntimeError,OSError) as exc:
+                        self._send_json({'error':f'分钟行情暂不可用：{exc}'},status=HTTPStatus.BAD_GATEWAY)
+                        return
+                    result=research.inspect_strategies(market,symbol,chart) if parsed.path.endswith('/strategies') else research.issue(market,symbol,chart,minutes=minutes,model_id=payload.get('model_id'))
+                    self._send_json(result)
+                elif parsed.path == '/api/short-term/research/watch':
+                    research.register(market,symbol,payload.get('enabled',True))
+                    self._send_json(research.snapshot(market,symbol))
+                elif parsed.path == '/api/short-term/research/run':
+                    research.register(market,symbol)
+                    self._send_json({'accepted':research.trigger()},status=HTTPStatus.ACCEPTED)
+                elif parsed.path == '/api/short-term/research/rollback':
+                    research.rollback(market,symbol,payload.get('horizon',30))
+                    self._send_json(research.snapshot(market,symbol))
+                else:
+                    self._send_json({'error':'接口不存在'},status=HTTPStatus.NOT_FOUND)
+                return
+            if parsed.path.startswith(("/api/portfolio/", "/api/investment/")):
+                portfolio_id = (parse_qs(parsed.query).get("portfolio_id") or [payload.get("portfolio_id", "default")])[0]
+                get_portfolio(self.server.app_state.config_store.read(), portfolio_id)
+                payload["portfolio_id"] = portfolio_id
+            if parsed.path == "/api/indices/settings":
+                self._send_json(self.server.app_state.index_monitor.configure(payload.get("selected_ids")))
+                return
+            if parsed.path == "/api/portfolios":
+                result = self.server.app_state.config_store.save_portfolio(payload.get("name"), payload.get("id"))
+                self._send_json(result)
+                return
+            if parsed.path in {"/api/investment/preview", "/api/investment/import", "/api/investment/save"}:
+                ledger = self.server.app_state.research_ledger
+                if parsed.path.endswith("/preview"):
+                    plan, warnings = investment.parse_payload(payload)
+                    result = {"plan": plan, "warnings": warnings}
+                elif parsed.path.endswith("/import"):
+                    result = investment.import_plan(ledger, payload, portfolio_id)
+                else:
+                    result = investment.save(ledger, payload, portfolio_id)
+                self._send_json(result)
+                return
             if parsed.path == "/api/research/earnings/refresh":
                 accepted = self.server.app_state.earnings_calendar.trigger_refresh()
                 self._send_json({"accepted": accepted, "runtime": self.server.app_state.earnings_calendar.runtime()},
@@ -1250,6 +1981,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/research/cards":
                 result = self.server.app_state.research_ledger.save_card(payload)
+                self._send_json(result, status=HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/research/valuations":
+                result = self.server.app_state.research_ledger.save_valuation(payload)
                 self._send_json(result, status=HTTPStatus.CREATED)
                 return
             if parsed.path == "/api/research/settings":
@@ -1281,6 +2016,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 status = HTTPStatus.ACCEPTED if accepted else HTTPStatus.CONFLICT
                 self._send_json({"accepted": accepted}, status=status)
                 return
+            if parsed.path == "/api/movements/investigation":
+                if not self._local_assistant():
+                    self._send_json({"error": "异动模型分析仅在本机使用"}, status=HTTPStatus.FORBIDDEN)
+                    return
+                result = self.server.app_state.movement_investigation.request(
+                    payload.get("market", ""), payload.get("symbol", ""), force=payload.get("force") is True)
+                self._send_json(result, status=HTTPStatus.ACCEPTED if result["status"] == "running" else HTTPStatus.OK)
+                return
             if parsed.path == "/api/assets/refresh":
                 accepted = self.server.app_state.trigger_asset_refresh()
                 status = HTTPStatus.ACCEPTED if accepted else HTTPStatus.CONFLICT
@@ -1306,25 +2049,115 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.server.app_state.update_x_token(payload)
                 self._send_json({"ok": True})
                 return
+            if parsed.path == "/api/analysis/credential":
+                self._send_json(self.server.app_state.update_analysis_credential(payload))
+                return
             if parsed.path == "/api/auto":
                 self.server.app_state.set_auto(bool(payload.get("enabled", False)))
                 self._send_json({"ok": True})
                 return
+            if parsed.path == "/api/watchlist/whitelist":
+                if payload.get("action", "add") == "add":
+                    from .security_master import resolve
+                    try:
+                        identity = resolve(str(payload.get("market", "")), str(payload.get("symbol", "")))
+                    except RuntimeError as exc:
+                        raise ValueError(f"证券识别暂不可用：{exc}") from exc
+                    payload = {**payload, "market": identity["market"], "symbol": identity["symbol"], "name": identity["name"]}
+                item = self.server.app_state.config_store.save_stock_whitelist(payload)
+                self._send_json({"item": item})
+                return
             if parsed.path == "/api/watchlist":
                 item = self.server.app_state.add_watch_item(payload)
                 self._send_json({"item": item}, status=HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/watchlist/replace":
+                from .security_master import resolve
+                previous = payload.get("previous")
+                if not isinstance(previous, dict):
+                    raise ValueError("缺少原股票标识")
+                try:
+                    identity = resolve(str(payload.get("market", "")), str(payload.get("symbol", "")))
+                except RuntimeError as exc:
+                    raise ValueError(f"证券识别暂不可用：{exc}") from exc
+                item = self.server.app_state.config_store.add_watch_item(identity, replace=(
+                    str(previous.get("market", "")).upper(), str(previous.get("symbol", "")).upper()))
+                self._send_json({"item": item})
                 return
             if parsed.path == "/api/portfolio/positions":
                 item = self.server.app_state.add_position(payload)
                 self._send_json({"item": item}, status=HTTPStatus.CREATED)
                 return
             if parsed.path == "/api/portfolio/principal":
-                amount = self.server.app_state.config_store.set_portfolio_principal(payload.get("principal_cny"))
+                amount = self.server.app_state.config_store.set_portfolio_principal(payload.get("principal_cny"), portfolio_id)
                 self._send_json({"principal_cny": amount})
+                return
+            if parsed.path == "/api/portfolio/dividends":
+                self._send_json({"item": self.server.app_state.config_store.save_dividend(payload)})
+                return
+            if parsed.path == "/api/portfolio/trades":
+                self._send_json({"item": self.server.app_state.config_store.add_historical_trade(payload)}, status=HTTPStatus.CREATED)
+                self.server.app_state.trigger_portfolio_refresh()
+                return
+            if parsed.path in {"/api/analysis-skills", "/api/briefing-skills"}:
+                if not self._local_assistant():
+                    self._send_json({"error": "Skill 仅在本机管理"}, status=HTTPStatus.FORBIDDEN)
+                else:
+                    from .analysis_skills import save_skills
+                    self._send_json(save_skills(self.server.app_state.config_store, payload,
+                                               'briefing' if parsed.path == '/api/briefing-skills' else 'analysis'))
+                return
+            if parsed.path == "/api/portfolio/records":
+                self._send_json(self.server.app_state.config_store.save_portfolio_records(payload))
+                return
+            if parsed.path == "/api/portfolio/pending":
+                self._send_json(self.server.app_state.config_store.save_pending_position(payload))
+                return
+            if parsed.path == "/api/portfolio/instrument-analysis":
+                if not self._local_assistant():
+                    self._send_json({"error": "标的模型分析仅在本机使用"}, status=HTTPStatus.FORBIDDEN)
+                else:
+                    self._send_json(self.server.app_state.instrument_analysis.request(portfolio_id, payload))
+                return
+            if parsed.path == "/api/portfolio/account":
+                result = self.server.app_state.config_store.set_portfolio_account(payload)
+                self.server.app_state.trigger_portfolio_refresh()
+                self._send_json(result)
+                return
+            if parsed.path == "/api/portfolio/identity":
+                result = self.server.app_state.config_store.correct_position_identity(payload)
+                self.server.app_state.trigger_portfolio_refresh()
+                self._send_json(result)
+                return
+            if parsed.path == "/api/portfolio/research":
+                research = self.server.app_state.get_portfolio_research(portfolio_id)
+                action = payload.get("action")
+                if action == "refresh":
+                    self._send_json({"started": research.refresh(payload.get("target"))})
+                elif action == "refresh_performance":
+                    self._send_json({"started": research.refresh_performance(payload.get("year"))})
+                elif action == "prepare_analysis_export":
+                    self._send_json(research.prepare_analysis_export(payload.get("year")))
+                elif action == "import":
+                    self._send_json({"id": research.import_data(payload.get("data"))})
+                elif action == "freeze":
+                    self._send_json(research.freeze(payload))
+                elif action == "save_backtest":
+                    from .backtest_archive import save
+                    self._send_json(save(research, payload))
+                else:
+                    raise ValueError("研究操作无效")
                 return
             if parsed.path == "/api/portfolio/adjust":
                 item = self.server.app_state.adjust_position(payload)
                 self._send_json({"item": item, "closed": item is None})
+                return
+            if parsed.path == "/api/portfolio/risk":
+                item = self.server.app_state.set_position_risk(payload)
+                self._send_json({"item": item})
+                return
+            if parsed.path == "/api/portfolio/plan":
+                self._send_json({"item": self.server.app_state.config_store.set_position_plan(payload)})
                 return
             if parsed.path == "/api/portfolio/refresh":
                 self.server.app_state.trigger_portfolio_refresh()
@@ -1351,11 +2184,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         parts = [unquote(value) for value in parsed.path.split("/") if value]
         try:
+            portfolio_id = (parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]
+            if len(parts) == 3 and parts[:2] == ["api", "portfolios"]:
+                if self._read_json().get("confirmed") is not True:
+                    raise ValueError("删除组合需要明确确认")
+                get_portfolio(self.server.app_state.config_store.read(), parts[2])
+                research = self.server.app_state._portfolio_researches.get(parts[2])
+                if research and research.busy:
+                    raise ValueError("组合研究正在更新，不能删除")
+                with self.server.app_state.research_ledger.session() as db:
+                    if db.execute("SELECT 1 FROM input_versions WHERE kind LIKE ? LIMIT 1", ("%:" + parts[2],)).fetchone():
+                        raise ValueError("组合仍有配置计划或研究记录，请保留该组合")
+                self.server.app_state.config_store.delete_portfolio(parts[2])
+                research = self.server.app_state._portfolio_researches.pop(parts[2], None)
+                if research:
+                    research.shutdown()
+                self.server.app_state.trigger_portfolio_refresh()
+                self._send_json({"ok": True})
+                return
+            if len(parts) == 4 and parts[:3] == ["api", "portfolio", "dividends"]:
+                if self._read_json().get("confirmed") is not True:
+                    raise ValueError("删除股息记录需要明确确认")
+                self.server.app_state.config_store.delete_dividend(parts[3], portfolio_id)
+                self._send_json({"ok": True})
+                return
             if parsed.path == "/api/portfolio/positions":
                 if self._read_json().get("confirmed") is not True:
                     raise ValueError("清空全部持仓需要明确确认")
-                removed = self.server.app_state.clear_positions()
+                removed = self.server.app_state.clear_positions(portfolio_id)
                 self._send_json({"ok": True, "removed_count": removed})
+                return
+            if len(parts) == 5 and parts[:3] == ["api", "watchlist", "whitelist"]:
+                removed = self.server.app_state.config_store.remove_stock_whitelist(parts[3], parts[4])
+                self._send_json({"ok": True} if removed else {"error": "白名单记录不存在"},
+                                status=HTTPStatus.OK if removed else HTTPStatus.NOT_FOUND)
                 return
             if len(parts) == 4 and parts[:2] == ["api", "watchlist"]:
                 removed = self.server.app_state.remove_watch_item(parts[2], parts[3])
@@ -1365,7 +2227,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({"ok": True})
                 return
             if len(parts) == 5 and parts[:3] == ["api", "portfolio", "positions"]:
-                removed = self.server.app_state.remove_position(parts[3], parts[4])
+                removed = self.server.app_state.remove_position(parts[3], parts[4], portfolio_id)
                 if not removed:
                     self._send_json({"error": "持仓不存在"}, status=HTTPStatus.NOT_FOUND)
                 else:
@@ -1377,6 +2239,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         except OSError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _send_xlsx(self, filename: str, content: bytes) -> None:
+        from .portfolio_export import MIME_TYPE
+
+        self._send_attachment(filename, content, MIME_TYPE, "STock-portfolio.xlsx")
+
+    def _send_attachment(self, filename: str, content: bytes, mime_type: str, fallback: str) -> None:
+        self.send_response(HTTPStatus.OK.value)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Content-Disposition", f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(content)
 
     def _read_json(self, *, max_length: int = 64_000) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -1392,9 +2269,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return payload
 
     def _send_json(self, data: Any, *, status: HTTPStatus = HTTPStatus.OK, download_name: str | None = None) -> None:
+        if self.command in {"POST", "PUT", "PATCH", "DELETE"} and status < 400:
+            invalidate = getattr(self.server.app_state, "invalidate_read_snapshots", None)
+            if invalidate:
+                invalidate()
         payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        compressed = False
+        for coding in self.headers.get("Accept-Encoding", "").split(","):
+            parts = coding.strip().split(";")
+            if parts[0].strip().lower() != "gzip":
+                continue
+            try:
+                quality = next((float(part.split("=", 1)[1]) for part in parts[1:] if part.strip().startswith("q=")), 1)
+            except (ValueError, IndexError):
+                quality = 0
+            if 0 < quality <= 1 and len(payload) >= 4096:
+                packed = gzip.compress(payload, compresslevel=1)
+                if len(packed) < len(payload):
+                    payload, compressed = packed, True
+            break
         self.send_response(status.value)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Vary", "Accept-Encoding")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
         if download_name:
             self.send_header("Content-Disposition",f'attachment; filename="{download_name}"')
         self.send_header("Content-Length", str(len(payload)))
@@ -1409,16 +2307,51 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/index.html": "index.html",
             "/styles.css": "styles.css",
             "/app.js": "app.js",
+            "/watchlist.js": "watchlist.js",
+            "/chart_tools.js": "chart_tools.js",
+            "/chart_tools.css": "chart_tools.css",
             "/startup_memory.js": "startup_memory.js",
             "/social.js": "social.js",
             "/research.js": "research.js",
             "/earnings.js": "earnings.js",
             "/workbench.js": "workbench.js",
             "/workbench.css": "workbench.css",
+            "/briefing.js": "briefing.js",
+            "/briefing.css": "briefing.css",
+            "/analysis_skills.js": "analysis_skills.js",
+            "/analysis_skills.css": "analysis_skills.css",
             "/annotations.js": "annotations.js",
             "/annotations.css": "annotations.css",
             "/indices.js": "indices.js",
             "/indices.css": "indices.css",
+            "/investment_core.js": "investment_core.js",
+            "/investment.js": "investment.js",
+            "/valuation_core.js": "valuation_core.js",
+            "/valuation.js": "valuation.js",
+            "/valuation.css": "valuation.css",
+            "/short_term.js": "short_term.js",
+            "/short_term.css": "short_term.css",
+            "/portfolio_research.js": "portfolio_research.js",
+            "/movement_investigation.js": "movement_investigation.js",
+            "/portfolio_research_core.js": "portfolio_research_core.js",
+            "/portfolio_research.css": "portfolio_research.css",
+            "/portfolio_workspace.js": "portfolio_workspace.js",
+            "/portfolio_pending.js": "portfolio_pending.js",
+            "/portfolio_records.js": "portfolio_records.js",
+            "/portfolio_workspace.css": "portfolio_workspace.css",
+            "/portfolio_trades.js": "portfolio_trades.js",
+            "/portfolio_trades.css": "portfolio_trades.css",
+            "/portfolio_dividends.js": "portfolio_dividends.js",
+            "/portfolio_dividends.css": "portfolio_dividends.css",
+            "/backtest_core.js": "backtest_core.js",
+            "/backtest.js": "backtest.js",
+            "/backtest_learning.js": "backtest_learning.js",
+            "/assistant.js": "assistant.js",
+            "/assistant.css": "assistant.css",
+            "/backtest.css": "backtest.css",
+            "/portfolio_books.js": "portfolio_books.js",
+            "/portfolio_books.css": "portfolio_books.css",
+            "/investment.css": "investment.css",
             "/logo.svg": "logo.svg",
             "/trash.svg": "trash.svg",
             "/icons.svg": "icons.svg",

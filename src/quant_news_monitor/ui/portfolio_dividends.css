@@ -1,0 +1,49 @@
+#portfolio-dividends { font-size:14px; }
+.dividend-heading,.dividend-tools { display:flex; align-items:center; gap:10px; }
+.dividend-heading { justify-content:space-between; margin:0 0 12px; }
+.dividend-heading h3 { margin:0; font-size:18px; }
+.dividend-heading select { width:128px; }
+.dividend-tools { flex-shrink:0; }
+.dividend-totals { display:flex; flex-wrap:wrap; gap:18px 36px; margin:0 0 12px; padding:12px 0; border-block:1px solid var(--line); }
+.dividend-totals dt { color:var(--muted); font-size:12px; }
+.dividend-totals dd { margin:4px 0 0; font-size:18px; font-variant-numeric:tabular-nums; }
+.dividend-table-wrap { max-width:100%; overflow-x:auto; }
+.dividend-table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+.dividend-table th,.dividend-table td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.dividend-table th { color:var(--muted); font-weight:600; white-space:nowrap; }
+.dividend-table small { display:block; margin-top:3px; font-size:12px; color:var(--muted); }
+.dividend-table .icon-button { width:32px; min-width:32px; min-height:32px; height:32px; }
+.dividend-table th:last-child,.dividend-table td:last-child { width:1%; }
+.dividend-records { margin-top:20px; }
+.dividend-empty { color:var(--muted); padding:10px 0; }
+.portfolio-dividend-income { color:var(--positive); font-size:11px; }
+#portfolio-dividend-dialog { width:min(570px,calc(100% - 24px)); padding:20px; }
+.dividend-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.dividend-form-grid input,.dividend-form-grid select { width:100%; box-sizing:border-box; }
+#portfolio-dividend-dialog input { width:100%; }
+.dividend-wide { grid-column:1/-1; }
+.dividend-form-grid label:has(.dividend-note) { grid-column:1/-1; }
+.dividend-form-grid output { min-height:40px; display:flex; align-items:center; color:var(--positive); font-variant-numeric:tabular-nums; }
+.dividend-hint { font-size:12px; color:var(--muted); line-height:1.6; margin:12px 0; }
+.dividend-footer { display:flex; justify-content:flex-end; }
+@media(max-width:600px) {
+  #portfolio-dividends .icon-button,#portfolio-dividend-dialog .icon-button { width:44px; height:44px; min-height:44px; min-width:44px; }
+  .dividend-heading { flex-wrap:wrap; }
+  .dividend-totals { gap:16px; }
+  .dividend-totals dd { font-size:16px; }
+  .dividend-table thead { display:none; }
+  .dividend-table tbody { display:block; }
+  .dividend-table tr { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .dividend-table td { display:block; padding:0; border:0; min-width:0; }
+  .dividend-table td:first-child { grid-column:1/-1; }
+  .dividend-table td:last-child { width:auto; }
+  .dividend-table td:nth-child(2)::before { content:'已收净股息 '; color:var(--muted); }
+  .dividend-table td:nth-child(3)::before { content:'待派发 '; color:var(--muted); }
+  .dividend-records .dividend-table td:nth-child(2) { grid-column:1/-1; }
+  .dividend-records .dividend-table td:nth-child(2)::before { content:none; }
+  .dividend-records .dividend-table td:nth-child(3)::before { content:'税前 '; }
+  .dividend-records .dividend-table td:nth-child(4)::before { content:'扣税 '; color:var(--muted); }
+  .dividend-records .dividend-table td:nth-child(5)::before { content:'净额 '; color:var(--muted); }
+  #portfolio-dividend-dialog { padding:16px; max-height:90dvh; }
+  .dividend-form-grid { gap:10px; }
+}

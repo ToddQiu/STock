@@ -14,7 +14,7 @@ from .mini_gateway import GatewayError, project
 PREFIX = '/public/v1/'
 FIELDS = {'overview': {'freshness', 'stats', 'news', 'movements'},
           'market': {'assets', 'news'}, 'research': {'items', 'total', 'offset'}}
-FORBIDDEN = {'portfolio', 'positions', 'principal_cny', 'quantity', 'average_cost', 'settings', 'config',
+FORBIDDEN = {'portfolio', 'portfolios', 'portfolio_risk_events', 'positions', 'principal_cny', 'quantity', 'average_cost', 'settings', 'config',
              'session_key', 'openid', 'token', 'secret', 'appsecret', 'api_key', 'password'}
 
 

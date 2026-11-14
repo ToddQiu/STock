@@ -270,7 +270,8 @@ class EarningsCalendar:
             items = copy.deepcopy(self._cache["items"])
         raw = self.config_store.read()
         watch = {symbol_key(item["symbol"]) for item in raw.get("watchlist", []) if item.get("market") == "US"}
-        held = {symbol_key(item["symbol"]) for item in (raw.get("portfolio") or {}).get("positions", []) if item.get("market") == "US"}
+        from .portfolio_book import all_positions
+        held = {symbol_key(item["symbol"]) for item in all_positions(raw) if item.get("market") == "US"}
         popular = {symbol_key(symbol) for symbol in COMMON_ALIASES} | watch | held
         for item in items:
             key = symbol_key(item["symbol"])

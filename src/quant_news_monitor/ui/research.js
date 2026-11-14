@@ -1,10 +1,12 @@
 "use strict";
 
-const researchState = { tab: "cards", data: null, inputs: null, cards: null, landscape: null, fundamentals: null, etf: null, etfSelected: "BUG", etfPair: null, companyId: null, cardOffset: 0, offset: 0, inputOffset: 0, request: 0, detailRequest: 0 };
+const researchState = { tab: "cards", data: null, inputs: null, cards: null, landscape: null, fundamentals: null, etf: null, etfSelected: "BUG", etfSymbols: ["IGV","XSW","WCLD","BUG"], etfRemote: {}, etfLoad: 0, etfPair: null, companyId: null, cardOffset: 0, offset: 0, inputOffset: 0, request: 0, detailRequest: 0 };
 const researchNames = { GOLD: "黄金", BTC: "BTC", "15m": "15 分钟", "1h": "1 小时", "24h": "24 小时" };
 const researchStatuses = { pending_entry: "等待新报价", tracking: "追踪中", evaluated: "已核对", missed_entry: "缺入场报价", missed_exit: "缺到期报价" };
-const researchKinds = { company_profile: "AI 产业公司资料", fundamentals: "公开年度财报", etf_holdings: "ETF 持仓快照", research_card: "公司与策略研究", news: "新闻源输入", social: "社交帖子", trump: "Trump 政策来源", forecast_inputs: "预测依据" };
+const researchKinds = { company_profile: "AI 产业公司资料", fundamentals: "公开年度财报", etf_holdings: "ETF 持仓快照", research_card: "公司与策略研究", valuation_model: "估值研究假设", news: "新闻源输入", social: "社交帖子", trump: "Trump 政策来源", forecast_inputs: "预测依据" };
+const strategyComparison = new Map();
 const researchEl = id => document.getElementById(id);
+const companyResearchTabs = ["cards", "landscape", "peers", "allocation"];
 
 function researchNumber(value, digits = 2, suffix = "") {
   return value == null || !Number.isFinite(Number(value)) ? "--" : Number(value).toLocaleString("zh-CN", {minimumFractionDigits: digits, maximumFractionDigits: digits}) + suffix;
@@ -20,17 +22,27 @@ function researchFilters() {
 }
 
 async function refreshResearch({ silent = false } = {}) {
+  if (researchState.tab === "fundamentals") researchState.tab = "earnings";
+  if (researchState.tab === "backtest") {
+    researchState.tab = "cards";
+    return setView("backtest");
+  }
   if (researchState.tab === "earnings") {
     ++researchState.request;
     renderResearch();
-    return refreshEarnings({silent});
+    return refreshEarningsCenter({silent});
+  }
+  if (["peers", "allocation", "valuation"].includes(researchState.tab)) {
+    ++researchState.request;
+    renderResearch();
+    return;
   }
   const sequence = ++researchState.request;
   renderResearch();
   const button = researchEl("research-refresh"), status = researchEl("research-request-status");
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  const hasData = researchState.tab === "etf" ? researchState.etf : researchState.tab === "cards" ? researchState.cards : researchState.tab === "landscape" ? researchState.landscape : researchState.tab === "fundamentals" ? researchState.fundamentals : researchState.tab === "inputs" ? researchState.inputs : researchState.data;
+  const hasData = researchState.tab === "etf" ? researchState.etf : researchState.tab === "cards" ? researchState.cards : researchState.tab === "landscape" ? researchState.landscape : researchState.tab === "inputs" ? researchState.inputs : researchState.data;
   if (!hasData) {
     researchEl("research-runtime").textContent = "正在读取";
     researchEl("research-notice").textContent = "";
@@ -46,12 +58,7 @@ async function refreshResearch({ silent = false } = {}) {
       const data = await api("/api/research/inputs?kind=etf_holdings");
       if (sequence !== researchState.request) return;
       researchState.etf = data.items.find(item => item.identity === "IGV-XSW-WCLD-BUG") || {payload:{funds:{}}};
-      renderResearch(); return;
-    }
-    if (researchState.tab === "fundamentals") {
-      const data = await api("/api/fundamentals");
-      if (sequence !== researchState.request) return;
-      researchState.fundamentals = data; renderResearch(); return;
+      renderResearch(); await loadEtfSelection(); return;
     }
     if (researchState.tab === "landscape") {
       const data = await api("/api/research/companies");
@@ -76,6 +83,7 @@ async function refreshResearch({ silent = false } = {}) {
     renderResearch();
   } catch (error) {
     if (sequence !== researchState.request) return;
+    researchEl("research-notice").hidden = false;
     researchEl("research-notice").textContent = `记录服务不可用：${error.message}`;
     if (!silent) showToast(error.message,"error");
     if (!hasData) {
@@ -92,24 +100,58 @@ async function refreshResearch({ silent = false } = {}) {
 }
 
 function renderResearch() {
+  if (researchState.tab === "fundamentals") researchState.tab = "earnings";
   if (typeof updateResearchSourceSites === "function") updateResearchSourceSites();
   const earningsTab = researchState.tab === "earnings";
-  researchEl("research-refresh").title=earningsTab ? "重新读取财报目录" : "刷新研究记录";
+  researchEl("research-refresh").title=earningsTab ? "刷新财报中心" : "刷新研究记录";
+  const valuationTab = researchState.tab === "valuation";
+  const localModule = ["peers", "allocation", "valuation"].includes(researchState.tab);
+  researchEl("research-export").hidden=localModule;
+  researchEl("research-refresh").hidden=localModule;
+  researchEl("research-runtime").hidden=localModule;
+  researchEl("research-notice").hidden=localModule;
   researchEl("research-refresh").setAttribute("aria-label", researchEl("research-refresh").title);
-  const cardsTab = researchState.tab === "cards", landscapeTab = researchState.tab === "landscape", fundamentalTab = researchState.tab === "fundamentals", etfTab = researchState.tab === "etf", inputsTab = researchState.tab === "inputs";
-  document.querySelectorAll("#research-tabs button").forEach(button=>{
-    const active=button.dataset.tab===researchState.tab;
-    button.classList.toggle("active",active);button.setAttribute("aria-pressed",String(active));
-    if (active && researchEl("research-current-title")) researchEl("research-current-title").textContent=button.textContent;
+  const cardsTab = researchState.tab === "cards", landscapeTab = researchState.tab === "landscape", etfTab = researchState.tab === "etf", inputsTab = researchState.tab === "inputs";
+  researchEl("etf-coverage").hidden=!etfTab;
+  const companyTab = companyResearchTabs.includes(researchState.tab);
+  researchEl("company-research-views").hidden=!companyTab;
+  researchEl("company-research-tools").hidden=!companyTab;
+  researchEl("strategy-new").hidden=!(cardsTab || landscapeTab);
+  researchEl("strategy-comparison").hidden=!cardsTab;
+  if (!(cardsTab || landscapeTab)) researchEl("research-company-add").hidden = true;
+  const evidenceTab = inputsTab || researchState.tab === "stats";
+  researchEl("research-evidence-views").hidden = !evidenceTab;
+  document.querySelectorAll("#research-evidence-views button").forEach(button => {
+    const active = button.dataset.tab === researchState.tab;
+    button.classList.toggle("active", active); button.setAttribute("aria-selected", String(active)); button.tabIndex = active ? 0 : -1;
   });
-  ["cards","etf","landscape","earnings","fundamentals","forecasts","inputs","stats"].forEach(tab=>researchEl(`research-${tab}-panel`).hidden=researchState.tab!==tab);
-  document.querySelector('.view[data-view="research"] .research-summary-band').hidden=cardsTab || landscapeTab || fundamentalTab || etfTab || earningsTab || inputsTab;
-  document.querySelector('.view[data-view="research"] .probability-disclaimer').hidden=cardsTab || landscapeTab || fundamentalTab || etfTab || earningsTab || inputsTab;
-  researchEl("research-settings-button").hidden=cardsTab || landscapeTab || fundamentalTab || etfTab || earningsTab || inputsTab;
-  researchEl("research-forecast-filters").hidden=cardsTab || landscapeTab || fundamentalTab || etfTab || earningsTab || researchState.tab==="inputs";
+  document.querySelectorAll("#company-research-views button").forEach(button=>{
+    const active=button.dataset.tab===researchState.tab;
+    button.classList.toggle("active",active);button.setAttribute("aria-selected",String(active));button.tabIndex=active?0:-1;
+  });
+  document.querySelectorAll("#research-tabs button, #market-nav [data-tab], #backtest-tabs [data-tab]").forEach(button=>{
+    const selected=button.dataset.tab===(companyTab ? "cards" : evidenceTab ? "inputs" : researchState.tab);
+    const active=selected && state.currentView==="research";
+    button.classList.toggle("active",active);button.setAttribute("aria-pressed",String(active));
+    if(active)button.setAttribute("aria-current","page");else button.removeAttribute("aria-current");
+    if (selected && researchEl("research-current-title")) researchEl("research-current-title").textContent=button.textContent;
+  });
+  [...companyResearchTabs,"etf","earnings","forecasts","inputs","stats","valuation"].forEach(tab=>researchEl(`research-${tab}-panel`).hidden=researchState.tab!==tab);
+  document.querySelector('.view[data-view="research"] .research-summary-band').hidden=companyTab || etfTab || earningsTab || inputsTab || valuationTab;
+  document.querySelector('.view[data-view="research"] .probability-disclaimer').hidden=companyTab || etfTab || earningsTab || inputsTab || valuationTab;
+  researchEl("research-settings-button").hidden=companyTab || etfTab || earningsTab || inputsTab || valuationTab;
+  researchEl("research-forecast-filters").hidden=companyTab || etfTab || earningsTab || inputsTab || valuationTab;
+  if (localModule) {
+    researchEl("research-pagination").hidden=true;
+    researchEl("research-request-status").hidden=true;
+    researchEl("research-refresh").disabled=false;
+    researchEl("research-refresh").setAttribute("aria-busy", "false");
+    return;
+  }
   if (inputsTab) {
     researchEl("research-runtime").textContent = "原始记录与出处";
-    researchEl("research-notice").textContent = "记录原文保留所属媒体、来源地址与采集时间；参考网站入口不代表已接通自动采集。";
+    researchEl("research-notice").hidden = true;
+    researchEl("research-notice").textContent = "";
     researchEl("research-export").href = `/api/research/export?type=inputs&kind=${researchEl("research-kind").value}`;
     if (researchState.inputs) renderResearchInputs(researchState.inputs);
     renderResearchPage(researchState.inputOffset, researchState.inputs?.total || 0);
@@ -121,52 +163,25 @@ function renderResearch() {
     researchEl("research-refresh").disabled=false;
     researchEl("research-refresh").setAttribute("aria-busy", "false");
     researchEl("research-export").href=`/api/research/earnings/export?${earningsParams(false)}`;
-    researchEl("research-notice").textContent="独立美股公司库 · 不受新闻股票池限制 · 热门核心公司及估算成交额至少 1 亿美元的公司";
+    researchEl("research-notice").textContent="日程与 EPS 为预期；已公布财报采用年度申报，非季度或 TTM。";
     renderEarnings();
+    renderCompanyFinancials();
     return;
   }
   if (etfTab) {
+    researchEl("research-current-title").textContent="ETF 自选对比";
     researchEl("research-pagination").hidden=true;
     researchEl("research-export").href="/api/research/export?type=inputs&kind=etf_holdings";
     researchEl("research-runtime").textContent=researchState.etf?.version ? `持仓快照 v${researchState.etf.version}` : "等待持仓快照";
-    researchEl("research-notice").textContent="快照比较，不是实时持仓。各基金日期独立；权重不凑足 100%。费用、指数规则与持仓日期分开标注；研究判断不代表收益预测。";
+    researchEl("research-notice").hidden=true;
+    researchEl("research-notice").textContent="";
     if (researchState.etf) renderEtfResearch();
-    return;
-  }
-  if (fundamentalTab) {
-    if (!researchState.fundamentals) return;
-    const data = researchState.fundamentals, runtime = data.runtime;
-    researchEl("research-runtime").textContent = `${runtime.enabled ? "财报采集已开启" : "财报采集已暂停"}${runtime.refresh_in_progress ? " · 采集中" : ""}`;
-    const coverage = runtime.coverage || {}, counts = `共 ${coverage.total ?? data.items.length} 个标的 · 已采集 ${coverage.available ?? data.items.filter(item=>item.status==="available").length} · 待采集 ${coverage.waiting || 0} · 未覆盖 ${coverage.unsupported || 0}`;
-    researchEl("research-notice").textContent = `${counts}。${runtime.error || runtime.scope} · 按公司分批检查、失败退避；已采集财报每 ${Math.round((runtime.interval_seconds || 21600)/3600)} 小时检查更新。年度数据，不等同于季度、TTM或一致预期。`;
-    researchEl("research-export").href = "/api/research/export?type=inputs&kind=fundamentals";
-    researchEl("research-pagination").hidden = true;
-    const container = researchEl("fundamental-records"), labels={waiting:"待采集",available:"已采集",unsupported:"未覆盖",stale:"保留旧数据",error:"来源错误"};
-    const signature = JSON.stringify(data.items);
-    if (container.fundamentalSignature === signature) return;
-    container.fundamentalSignature = signature;
-    const opened = new Set([...(container.querySelectorAll?.("details[open]") || [])].map(row=>row.dataset.symbol));
-    container.replaceChildren();
-    if (!data.items.length) container.append(emptyState("暂无已采集财报", "采集状态与覆盖范围见上方；缺少数据不会用零代替。"));
-    data.items.forEach(item => {
-      const row = el("details", "strategy-card"), heading = el("summary", "strategy-card-heading");
-      row.dataset.symbol=item.symbol; row.open=opened.has(item.symbol);
-      const identity=el("div","strategy-identity");identity.append(el("strong", "", `${item.symbol} · ${item.company || ""}`),instrumentBriefNode({market:"US",symbol:item.symbol}));
-      heading.append(identity,el("span", "quiet-note", `${labels[item.status] || item.status} · 报告期 ${item.data_as_of || "--"}`));row.append(heading);
-      const body = el("div", "company-fields");
-      Object.values(item.metrics || {}).forEach(metric => researchField(body,metric.label,`${researchNumber(metric.value)} ${metric.unit} · ${metric.end}${metric.growth_pct == null ? "" : ` · 同比 ${researchNumber(metric.growth_pct)}%`}`));
-      if(item.valuation)researchField(body,"最近财年市盈率（非 TTM）",`${researchNumber(item.valuation.annual_pe)} · 价格时点 ${researchDate(item.valuation.price_as_of)} · EPS报告期 ${item.valuation.eps_as_of || "--"}`);
-      row.append(body,el("p","quiet-note",item.error || item.note || "数据尚未取得，不以零代替缺失值"));
-      if(item.source_url)researchLink(row,"SEC 原始申报",item.source_url);
-      if(item.valuation)row.append(el("p","quiet-note",item.valuation.error || item.valuation.note));
-      container.append(row);
-    });
     return;
   }
   if (landscapeTab) {
     if (!researchState.landscape) return;
     researchEl("research-runtime").textContent=`官网核验 ${researchState.landscape.reviewed_at}`;
-    researchEl("research-notice").textContent=researchState.landscape.method;
+    researchEl("research-notice").hidden=true;
     researchEl("research-export").href="/api/research/export?type=inputs&kind=company_profile";
     researchEl("research-pagination").hidden=true;
     renderCompanyLandscape(); return;
@@ -174,7 +189,8 @@ function renderResearch() {
   if (cardsTab) {
     if (!researchState.cards) return;
     researchEl("research-runtime").textContent="研究版本留痕";
-    researchEl("research-notice").textContent="事实与推断分开；缺少资料或成立条件的研究标记为证据不足，不生成交易指令。";
+    researchEl("research-notice").hidden=true;
+    researchEl("research-notice").textContent="";
     researchEl("research-export").href="/api/research/export?type=inputs&kind=research_card";
     renderStrategyCards(researchState.cards);
     renderResearchPage(researchState.cardOffset,researchState.cards.total); return;
@@ -183,7 +199,7 @@ function renderResearch() {
   if (!data) return;
   ["total","pending","evaluated","missing"].forEach(key => researchEl(`research-${key}`).textContent = researchNumber(data.summary[key],0));
   researchEl("research-runtime").textContent = `${data.settings.enabled ? "新增记录已开启" : "新增记录已暂停"} · ${data.runtime.last_tick ? researchDate(data.runtime.last_tick) : "等待后台启动"}`;
-  researchEl("research-notice").textContent = data.runtime.error || `仅前向模拟，不下单。${data.summary.input_count} 个输入版本 · ${data.summary.analysis_count} 次分析留痕。旧数据不补写历史预测，缺失结果不计入成绩。`;
+  researchEl("research-notice").textContent = data.runtime.error || `${data.summary.input_count} 个输入版本 · ${data.summary.analysis_count} 次分析留痕`;
   researchEl("research-export").href = researchState.tab === "inputs" ? `/api/research/export?type=inputs&kind=${researchEl("research-kind").value}` : `/api/research/export?${researchFilters()}`;
   ["forecasts","inputs","stats"].forEach(tab => researchEl(`research-${tab}-panel`).hidden = researchState.tab !== tab);
   researchEl("research-forecast-filters").hidden = researchState.tab === "inputs";
@@ -380,28 +396,34 @@ function renderCompanyLandscape() {
       button.setAttribute("aria-controls","company-detail");
       const identity=el("div");identity.append(el("strong","",company.name),el("small","",`${data.entities[company.entity]}${company.ticker ? ` · ${company.ticker}` : ""}`),el("small","",company.layers.map(key=>data.layers[key]).join(" / ")));
       identity.append(instrumentBriefNode({target:`COMPANY:${company.id}`}));
-      button.append(el("span","company-order",String(company.order).padStart(2,"0")),identity);
-      button.addEventListener("click",()=>{researchState.companyId=company.id;renderCompanyLandscape();});list.append(button);
+      button.append(identity);
+      button.addEventListener("click",()=>{researchState.navigationEdited=true;researchState.companyId=company.id;renderCompanyLandscape();});list.append(button);
     });
     if (!companies.length) list.append(el("p","quiet-note","没有匹配的公司或机构"));
   }
   list.querySelectorAll("button").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.companyId===researchState.companyId)));
   const company=companies.find(row=>row.id===researchState.companyId),detail=researchEl("company-detail"),detailSignature=JSON.stringify(company || null);
   if (detail.dataset.signature===detailSignature) return;
+  const sameCompany=detail.dataset.companyId===company?.id;
+  const expanded=new Set(Array.from(detail.querySelectorAll(".company-module[open]"),node=>node.dataset.module));
+  detail.dataset.companyId=company?.id || "";
   detail.dataset.signature=detailSignature;detail.replaceChildren();
   if (!company) {const title=el("h2","","暂无匹配研究");title.id="company-detail-title";detail.append(title);return;}
+  function module(id, label, basis) {
+    const section=el("details","company-module"),summary=el("summary"),body=el("div","company-module-body");
+    section.dataset.module=id;section.open=sameCompany ? expanded.has(id) : id==="facts";
+    summary.append(el("span","company-module-title",label),el("small","company-module-basis",basis));
+    section.append(summary,body);detail.append(section);return body;
+  }
   const header=el("header","company-detail-heading"),title=el("h2","",company.name);title.id="company-detail-title";
   header.append(title,el("p","quiet-note",`${data.entities[company.entity]}${company.ticker ? ` · 美股 ${company.ticker}` : " · 未关联公开股票代码"} · ${company.layers.map(key=>data.layers[key]).join(" / ")}`));
-  header.append(instrumentBriefNode({target:`COMPANY:${company.id}`}));
   const actions=el("div","research-actions");
-  [["建立研究",()=>openCompanyResearch(company)],["资料版本",()=>openResearchDetail("inputs",company.input_version_id)]].forEach(([label,action])=>{const button=el("button","secondary-button",label);button.type="button";button.addEventListener("click",action);actions.append(button);});
-  detail.append(header,actions,el("h3","","业务事实 · 官网陈述"),el("p","company-business",company.business));
-  const sources=el("div","company-sources");company.sources.forEach(source=>researchLink(sources,`${source.title} · ${source.published_at ? `发布 ${source.published_at}` : "发布日期未注明"}`,source.url));
-  sources.append(el("p","quiet-note",`官网核验 ${data.reviewed_at} · 资料 v${company.version} · 此版本留存 ${researchDate(company.observed_at)}`));detail.append(sources);
+  [["建立研究",()=>openCompanyResearch(company)],["相关研究",()=>openCompanyStrategies(company)],["资料版本",()=>openResearchDetail("inputs",company.input_version_id)]].forEach(([label,action])=>{const button=el("button","secondary-button",label);button.type="button";button.addEventListener("click",action);actions.append(button);});
+  header.append(actions);detail.append(header);
+  module("facts","业务事实","官网陈述").append(el("p","company-business",company.business));
   const financials = company.financials;
   if (company.ticker) {
-    const section = el("section", "company-analysis");
-    section.append(el("h3", "", "公开年度财报与估值"));
+    const section = module("financials", "公开财报与估值", "年度数据 · 非 TTM");
     if (financials && Object.keys(financials.metrics || {}).length) {
       section.append(el("p", "quiet-note", `${financials.source} · 采集 ${researchDate(financials.collected_at)}${financials.cached ? " · 保留缓存" : ""}`));
       const metrics = el("div", "company-fields");
@@ -417,17 +439,34 @@ function renderCompanyLandscape() {
       }
     } else section.append(el("p", "quiet-note", financials?.error || financials?.note || "后台正在采集公开财报；未取得的数据不填零。"));
     if (financials?.error) section.append(el("p", "negative", `保留旧数据 · ${financials.error}`));
-    detail.append(section);
   }
-  const analysis=el("section","company-analysis");analysis.append(el("h3","","经营与投资框架 · 研究推断"));
+  const analysis=module("framework","经营与投资框架","研究推断");
   const fields=el("div","company-fields");
-  Object.entries({monetization:"收入与价值来源",fundamentals:"基本面驱动",moat:"竞争位置与护城河",valuation:"估值或尽调基准",macro:"宏观传导",strategic_fit:"CVC 协同",metrics:"下一步验证指标",risks:"风险与反证缺口"}).forEach(([key,label])=>researchField(fields,label,company[key]));analysis.append(fields);detail.append(analysis);
-  detail.append(el("h3","","条件情景 · 不代表当前股价判断"));
+  Object.entries({monetization:"收入与价值来源",fundamentals:"基本面驱动",moat:"竞争位置与护城河",valuation:"估值或尽调基准",macro:"宏观传导",strategic_fit:"CVC 协同",metrics:"下一步验证指标",risks:"风险与反证缺口"}).forEach(([key,label])=>researchField(fields,label,company[key]));analysis.append(fields);
+  const scenarioModule=module("scenarios","条件情景","成立 / 失效条件");
   const scenarios=el("div","company-scenarios"),stances=company.entity==="listed" ? strategyStances : {bullish:"积极情景",neutral:"观察情景",bearish:"谨慎情景"};
   Object.entries(stances).forEach(([stance,label])=>{
     const section=el("section",`company-scenario company-scenario-${stance}`);section.append(el("h4","",label));
     Object.entries({thesis:"推断",conditions:"成立条件",invalidation:"失效条件"}).forEach(([key,title])=>researchField(section,title,company.scenarios[stance][key]));scenarios.append(section);
-  });detail.append(scenarios,el("p","research-notice","待补最新财务或项目数据、可靠预期基准与独立反证。官网核验日期不是财报日期；没有计算上涨概率，不生成交易指令。"));
+  });scenarioModule.append(el("p","quiet-note","条件情景不代表当前股价判断。"),scenarios,el("p","research-notice","待补最新财务或项目数据、可靠预期基准与独立反证。官网核验日期不是财报日期；没有计算上涨概率，不生成交易指令。"));
+  const sources=el("div","company-sources");company.sources.forEach(source=>researchLink(sources,`${source.title} · ${source.published_at ? `发布 ${source.published_at}` : "发布日期未注明"}`,source.url));
+  sources.append(el("p","quiet-note",`官网核验 ${data.reviewed_at} · 资料 v${company.version} · 此版本留存 ${researchDate(company.observed_at)}`),el("p","quiet-note",data.method));
+  module("sources","来源与版本",`${company.sources.length} 个来源 · v${company.version}`).append(sources);
+}
+
+function openCompanyStrategies(company) {
+  researchEl("strategy-search").value=company.ticker ? `US:${company.ticker}` : `COMPANY:${company.id}`;
+  researchEl("strategy-stance").value="all";
+  researchState.cardOffset=0;
+  selectCompanyResearch("cards");
+  researchEl("strategy-search").focus();
+}
+
+function selectCompanyResearch(tab) {
+  if (!companyResearchTabs.includes(tab)) return;
+  researchState.navigationEdited=true;
+  researchState.tab=tab;
+  setView("research");
 }
 
 function openCompanyResearch(company) {
@@ -451,8 +490,8 @@ function strategyField(parent,label,name,value="",type="textarea",options=null) 
   wrapper.append(el("span","",label),control);parent.append(wrapper);return control;
 }
 
-function addStrategyEvidence(row={}) {
-  const container=researchEl("strategy-evidence"), entry=el("div","strategy-evidence-row");
+function addStrategyEvidence(row={}, container=researchEl("strategy-evidence")) {
+  const entry=el("div","strategy-evidence-row");
   strategyField(entry,"类型","role",row.role || "support","select",{support:"证据",counter:"反证"});
   const url=strategyField(entry,"原文链接","url",row.url,"url");url.maxLength=2048;url.required=true;
   strategyField(entry,"证据日期","as_of",row.as_of,"date");
@@ -461,11 +500,13 @@ function addStrategyEvidence(row={}) {
   remove.addEventListener("click",()=>entry.remove());entry.append(remove);container.append(entry);
 }
 
-function openStrategyEditor(card={}) {
-  researchState.tab="cards"; setView("research");
-  const form=researchEl("strategy-editor");form.replaceChildren();form.hidden=false;
+function openStrategyEditor(card={}, embedded=null) {
+  if (!embedded) selectCompanyResearch("cards");
+  const form=embedded?.form || researchEl("strategy-editor");form.replaceChildren();form.hidden=false;
+  form._portfolioEditor=embedded;
+  if (!embedded) researchEl("research-company-add").hidden=true;
   const heading=el("div","research-section-heading");heading.append(el("h2","",card.id ? `编辑研究 · v${card.version}` : "新建研究"));
-  const cancel=el("button","secondary-button","取消");cancel.type="button";cancel.addEventListener("click",()=>{form.hidden=true;researchEl("strategy-new").focus();});heading.append(cancel);form.append(heading);
+  const cancel=el("button","secondary-button","取消");cancel.type="button";cancel.addEventListener("click",()=>{if(embedded)embedded.close();else{form.hidden=true;researchEl("strategy-new").focus();}});heading.append(cancel);form.append(heading);
   const identity=el("div","strategy-grid");form.append(identity);
   [["公司或标的","name"],["代码 / 公司标识","target"]].forEach(([label,key])=>{strategyField(identity,label,key,card[key],"text").required=true;});
   const brief=instrumentBriefNode(card);identity.append(brief);
@@ -480,10 +521,11 @@ function openStrategyEditor(card={}) {
     const section=el("section");section.append(el("h3","",label));
     Object.entries({thesis:"情景推断",conditions:"成立条件",invalidation:"失效条件"}).forEach(([key,title])=>strategyField(section,title,`${stance}_${key}`,card.scenarios?.[stance]?.[key]));scenarios.append(section);
   });
-  const evidenceHeading=el("div","research-section-heading"),add=el("button","secondary-button","添加证据 / 反证");add.type="button";add.addEventListener("click",()=>addStrategyEvidence());
-  evidenceHeading.append(el("h3","","原文证据"),add);const evidence=el("div");evidence.id="strategy-evidence";form.append(evidenceHeading,evidence);
-  (card.evidence || []).forEach(addStrategyEvidence);
-  const error=el("p","negative");error.id="strategy-error";error.setAttribute("role","alert");const save=el("button","primary-button","保存研究版本");save.type="submit";form.append(error,save);
+  const evidenceHeading=el("div","research-section-heading"),add=el("button","secondary-button","添加证据 / 反证");add.type="button";
+  evidenceHeading.append(el("h3","","原文证据"),add);const evidence=el("div");if(!embedded)evidence.id="strategy-evidence";form.append(evidenceHeading,evidence);
+  add.addEventListener("click",()=>addStrategyEvidence({},evidence));
+  (card.evidence || []).forEach(row=>addStrategyEvidence(row,evidence));
+  const error=el("p","negative");if(!embedded)error.id="strategy-error";error.setAttribute("role","alert");const save=el("button","primary-button","保存研究版本");save.type="submit";form.append(error,save);
   form.dataset.id=card.id || "";form.dataset.version=card.version || 0;form.elements.name.focus();
 }
 
@@ -492,13 +534,19 @@ async function saveStrategyCard(event) {
   const body={id:form.dataset.id,base_version:Number(form.dataset.version),scenarios:{},evidence:[]};
   ["name","target","kind","stance","data_as_of","horizon",...Object.keys(strategyFields)].forEach(key=>body[key]=form.elements[key].value);
   Object.keys(strategyStances).forEach(stance=>{body.scenarios[stance]={};["thesis","conditions","invalidation"].forEach(key=>body.scenarios[stance][key]=form.elements[`${stance}_${key}`].value);});
-  document.querySelectorAll(".strategy-evidence-row").forEach(row=>{const evidence={};row.querySelectorAll("input,select,textarea").forEach(input=>evidence[input.name]=input.value);body.evidence.push(evidence);});
-  try {await api("/api/research/cards",{method:"POST",body});form.hidden=true;showToast("研究版本已保存","success");await refreshResearch();researchEl("strategy-new").focus();}
-  catch(error){researchEl("strategy-error").textContent=error.message;}finally{button.disabled=false;}
+  form.querySelectorAll(".strategy-evidence-row").forEach(row=>{const evidence={};row.querySelectorAll("input,select,textarea").forEach(input=>evidence[input.name]=input.value);body.evidence.push(evidence);});
+  try {const saved=await api("/api/research/cards",{method:"POST",body});
+    if(form._portfolioEditor){await form._portfolioEditor.saved(saved);return;}
+    form.hidden=true;
+    if (!body.id) {researchEl("strategy-search").value=body.target;researchEl("strategy-stance").value="all";researchState.cardOffset=0;}
+    showToast("研究版本已保存","success");await refreshResearch();researchEl("strategy-new").focus();}
+  catch(error){form.querySelector('[role="alert"]').textContent=error.message;}finally{button.disabled=false;}
 }
 
 function renderStrategyCards(data) {
   researchEl("strategy-count").textContent=`${data.total} 项研究`;
+  data.items.forEach(card => {if (strategyComparison.has(card.id)) strategyComparison.set(card.id, card);});
+  renderStrategyComparison();
   const container=researchEl("strategy-cards"), signature=JSON.stringify(data);
   if(container.dataset.signature===signature)return;
   const open=new Set(Array.from(container.querySelectorAll("details[open]")).map(node=>node.dataset.id));
@@ -511,13 +559,91 @@ function renderStrategyCards(data) {
     const summary=el("summary");summary.append(identity,el("span","",card.target),el("span",card.stance==="bullish"?"positive":card.stance==="bearish"?"negative":"neutral",strategyStances[card.stance]),el("small","",`${card.assessment_status==="conditional"?"有条件研究":"证据不足"} · v${card.version} · 资料 ${card.data_as_of || "未注明"}`));item.append(summary);
     const content=el("div","strategy-card-body"),actions=el("div","research-actions");
     [["编辑 / 复盘",()=>openStrategyEditor(card)],["版本与原始记录",()=>openResearchDetail("inputs",card.input_version_id)]].forEach(([label,action],index)=>{const button=el("button","secondary-button",label);button.type="button";button.dataset.cardAction=`${card.id}:${index}`;button.addEventListener("click",action);actions.append(button);});content.append(actions);
+    const compare = el("button", "secondary-button", "加入对比"); compare.type="button"; compare.dataset.compareId=card.id; compare.prepend(uiIcon("plus"));
+    compare.addEventListener("click",()=>{
+      if (strategyComparison.has(card.id)) strategyComparison.delete(card.id);
+      else if (strategyComparison.size < 4) {strategyComparison.set(card.id,card);researchEl("strategy-comparison").open=true;}
+      else {showToast("最多对比 4 项研究，请先移除一项", "error");return;}
+      renderStrategyComparison();
+    });actions.prepend(compare);
     content.append(el("p","quiet-note",`期限 ${card.horizon || "未注明"} · 保存 ${researchDate(card.observed_at)} · 预期基准${card.baseline_status==="missing"?"缺失，不能认定超预期":"由研究者提供，尚未核验"}`));
     const fields=el("div","strategy-grid");Object.entries(strategyFields).forEach(([key,label])=>researchField(fields,label,card[key] || "未填写"));content.append(fields);
     const scenarios=el("div","strategy-scenarios");Object.entries(strategyStances).forEach(([stance,label])=>{const section=el("section");section.append(el("h3","",label));Object.entries({thesis:"情景推断",conditions:"成立条件",invalidation:"失效条件"}).forEach(([key,title])=>researchField(section,title,card.scenarios[stance][key] || "未填写"));scenarios.append(section);});content.append(scenarios);
     card.evidence.forEach(evidence=>{const row=el("div","strategy-evidence");row.append(el("strong","",`${evidence.role==="counter"?"反证":"证据"} · ${evidence.as_of || "日期未注明"}`),el("p","",evidence.excerpt));researchLink(row,"打开原文",evidence.url);content.append(row);});
     if(!card.evidence.some(row=>row.role==="counter"))content.append(el("p","quiet-note","反证尚未记录"));item.append(content);container.append(item);
   });
+  renderStrategyComparison();
   if(focusId)Array.from(container.querySelectorAll("[data-card-action]")).find(node=>node.dataset.cardAction===focusId)?.focus();
+}
+
+function renderStrategyComparison() {
+  const cards=[...strategyComparison.values()], selected=researchEl("strategy-comparison-selected"), container=researchEl("strategy-comparison-table");
+  const picker=researchEl("strategy-compare-select"), available=(researchState.cards?.items || []).filter(card=>!strategyComparison.has(card.id));
+  const pickerSignature=JSON.stringify(available.map(card=>[card.id,card.name,card.target]));
+  if(picker.dataset.signature!==pickerSignature){
+    const previous=picker.value;picker.dataset.signature=pickerSignature;
+    picker.replaceChildren(...available.map(card=>{const option=el("option","",`${card.name} · ${card.target}`);option.value=card.id;return option;}));
+    if(available.some(card=>card.id===previous))picker.value=previous;
+  }
+  picker.disabled=!available.length;researchEl("strategy-compare-add").disabled=!available.length || cards.length>=4;
+  researchEl("strategy-comparison-count").textContent=`${cards.length} / 4`;
+  const signature=JSON.stringify(cards);
+  document.querySelectorAll("[data-compare-id]").forEach(button=>{
+    const active=strategyComparison.has(button.dataset.compareId);
+    button.setAttribute("aria-pressed",String(active));button.replaceChildren(uiIcon(active?"minus":"plus"),document.createTextNode(active?"移出对比":"加入对比"));
+  });
+  if(container.dataset.signature===signature)return;
+  container.dataset.signature=signature;selected.replaceChildren();container.replaceChildren();
+  cards.forEach(card=>{
+    const row=el("span","research-selection-item",card.name),remove=el("button","icon-button");remove.type="button";
+    remove.title=`移出对比 ${card.name}`;remove.setAttribute("aria-label",remove.title);remove.append(uiIcon("x"));
+    remove.addEventListener("click",()=>{strategyComparison.delete(card.id);renderStrategyComparison();researchEl("strategy-comparison").querySelector("summary").focus();});row.append(remove);selected.append(row);
+  });
+  if(cards.length<2){container.append(el("p","quiet-note","选择已有研究后加入对比；至少 2 项、最多 4 项。"));return;}
+  const {table,body}=etfTable(["研究维度",...cards.map(card=>`${card.name} · ${card.target} · v${card.version}`)]);
+  for(const [key,label] of [["data_as_of","资料截至"],["stance","有条件判断"],["horizon","研究期限"],...Object.entries(strategyFields)]){
+    const row=el("tr"),heading=el("th","",label);heading.scope="row";row.append(heading);
+    cards.forEach(card=>row.append(el("td","",key==="stance"?strategyStances[card.stance]:card[key] || "未填写")));body.append(row);
+  }
+  const evidence=el("tr");const heading=el("th","","证据与反证");heading.scope="row";evidence.append(heading);
+  cards.forEach(card=>{const cell=el("td");(card.evidence || []).forEach(row=>researchLink(cell,`${row.role==="counter"?"反证":"证据"} · ${row.as_of || "日期未注明"}`,row.url));if(!card.evidence?.length)cell.textContent="未填写";evidence.append(cell);});body.append(evidence);container.append(table);
+}
+
+function openResearchCompanyAdd() {
+  if (!researchEl("strategy-editor").hidden && !confirm("放弃尚未保存的研究编辑？")) return;
+  researchEl("strategy-editor").hidden=true;
+  const form=researchEl("research-company-add");form.hidden=false;
+  researchEl("research-company-add-status").textContent="";form.elements.symbol.focus();
+}
+
+async function addResearchCompany(event) {
+  event.preventDefault();const form=event.currentTarget,button=event.submitter;
+  const market=form.elements.market.value,symbol=form.elements.symbol.value.trim().toUpperCase();
+  button.disabled=true;researchEl("research-company-add-status").textContent="正在核对证券正式名称…";
+  try {
+    const identity=await api(`/api/securities/resolve?market=${encodeURIComponent(market)}&symbol=${encodeURIComponent(symbol)}`);
+    if(form.hidden || form.elements.market.value!==market || form.elements.symbol.value.trim().toUpperCase()!==symbol)return;
+    if(!identity.name || identity.market!==market || !identity.symbol)throw Error("来源未返回可核验的证券名称");
+    openStrategyEditor({name:identity.name,target:`${identity.market}:${identity.symbol}`,kind:"stock",stance:"neutral"});
+    const editor=researchEl("strategy-editor");editor.elements.name.readOnly=true;editor.elements.target.readOnly=true;
+    editor.elements.name.title="按证券代码识别的正式名称，不使用自定义别名";
+  } catch(error) {researchEl("research-company-add-status").textContent=`无法建立研究：${error.message}。请核对市场和代码后重试。`;}
+  finally {button.disabled=false;}
+}
+
+async function addEtfSelection(event) {
+  event.preventDefault();const input=researchEl("etf-add-symbol"),status=researchEl("etf-add-status");
+  status.hidden=true;status.textContent="";
+  try {
+    const added=parseEtfSelection(input.value);
+    if(added.length!==1)throw Error("每次添加一个 ETF 代码");
+    // Include an unfinished bulk edit instead of silently discarding it.
+    const current=parseEtfSelection(researchEl("etf-symbols").value);
+    if(current.includes(added[0]))throw Error(`${added[0]} 已在对比列表中`);
+    const symbols=parseEtfSelection([...current,...added].join(","));
+    researchEl("etf-symbols").value=symbols.join(", ");input.value="";
+    await changeEtfSelection();input.focus();
+  } catch(error) {status.textContent=error.message;status.hidden=false;}
 }
 
 const etfCatalog = {
@@ -528,6 +654,43 @@ const etfCatalog = {
 };
 const etfSymbols = Object.keys(etfCatalog);
 const etfTypes = {stock:"股票",cash:"现金 / 货币基金",future:"期货",other:"其他"};
+
+function parseEtfSelection(value) {
+  const symbols=[...new Set(String(value).toUpperCase().trim().split(/[\s,，、;；]+/).filter(Boolean))];
+  if (!symbols.length || symbols.length>6 || symbols.some(symbol=>! /^[A-Z0-9][A-Z0-9.\-]{0,14}$/.test(symbol))) throw Error("请输入 1 至 6 个 ETF 代码，以逗号或空格分隔。");
+  return symbols;
+}
+
+function etfMeta(symbol, market) {
+  return etfCatalog[symbol] || {name:market?.meta?.longName || symbol,theme:"自选 ETF",scope:"投资范围待发行商资料核验",weighting:"待核验",fee:null,feeDate:"待核验",
+    source:`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`,focus:"核对基金跟踪目标、费用、持仓结构及是否使用杠杆；名称相近不代表风险相同。",
+    condition:"需结合跟踪目标、盈利与估值证据判断；价格趋势不能代替基本面。",invalidation:"跟踪目标改变、持仓集中或衍生品敞口增加，需重新核验。"};
+}
+
+function etfMarketAnalysis(market, symbol) {
+  if (!market || market.meta?.symbol?.toUpperCase()!==symbol || market.meta?.instrumentType!=="ETF") return null;
+  const values=market.indicators?.adjclose?.[0]?.adjclose || market.indicators?.quote?.[0]?.close || [];
+  const rows=(market.timestamp || []).map((time,i)=>({time,close:values[i]})).filter(row=>Number.isFinite(row.time)&&Number.isFinite(row.close)&&row.close>0).sort((a,b)=>a.time-b.time);
+  if (!rows.length) return null;
+  const closes=rows.map(row=>row.close),last=closes[closes.length-1],mean=n=>closes.length>=n?closes.slice(-n).reduce((a,b)=>a+b,0)/n:null;
+  let peak=closes[0],drawdown=0;
+  for(const value of closes){peak=Math.max(peak,value);drawdown=Math.min(drawdown,(value/peak-1)*100);}
+  const ma20=mean(20),ma60=mean(60),stance=ma20===null||ma60===null?"样本不足":last>ma20&&ma20>ma60?"趋势偏多":last<ma20&&ma20<ma60?"趋势偏空":"趋势中性";
+  return {name:market.meta.longName||symbol,as_of:new Date(rows[rows.length-1].time*1000).toISOString(),samples:closes.length,
+    change20:closes.length>20?(last/closes[closes.length-21]-1)*100:null,change60:closes.length>60?(last/closes[closes.length-61]-1)*100:null,drawdown,stance,
+    basis:market.indicators?.adjclose?.[0] ? "来源复权收盘价" : "未复权收盘价；分红和拆股可能影响比较"};
+}
+
+function etfAnalysis(fund, market, symbol) {
+  const stats=etfStatistics(fund),price=etfMarketAnalysis(market,symbol),facts=[];
+  if(stats){
+    facts.push(`持仓 ${fund.as_of}：${stats.stocks} 条股票项目，前十大正权重股票占 ${stats.top10.toFixed(2)}%。`);
+    if(stats.largest)facts.push(`最大股票 ${stats.largest.symbol} 占 ${stats.largest.weight.toFixed(2)}%。`);
+    if(stats.other || !stats.stocks)facts.push(`非股票净权重 ${stats.other.toFixed(2)}%；股票交集不能衡量债券、期货或杠杆风险。`);
+  }else facts.push("完整持仓缺失：不估算集中度，也不把缺失成分当作未持有。");
+  if(price)facts.push(`${price.samples} 个日线样本，样本内最大回撤 ${price.drawdown.toFixed(2)}%；${price.basis}，不是未来亏损上限。`);
+  return {facts,stance:price?.stance || "行情待核验",inference:stats ? (stats.top10>=50?"按前十大正权重股票超过 50% 的提示阈值，少数公司对组合影响较大。":"前十大集中度未超过 50% 提示阈值，但不能据此认定低风险或充分分散。") : "缺少持仓，暂不能判断行业暴露与分散效果。"};
+}
 
 function etfWeight(value) {
   return value == null ? "--" : Number(value).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:6})+"%";
@@ -565,57 +728,116 @@ function etfOverlap(first, second) {
 
 function etfCompareRows(funds, {symbols=etfSymbols, filter="shared", search=""}={}) {
   const rows=new Map(),query=search.trim().toLocaleLowerCase();
-  for (const symbol of etfSymbols) for (const holding of funds[symbol]?.holdings || []) {
+  for (const symbol of Object.keys(funds)) for (const holding of funds[symbol]?.holdings || []) {
     if (holding.type!=="stock" || !holding.key) continue;
     const row=rows.get(holding.key) || {key:holding.key,name:holding.name,symbol:holding.symbol,weights:{}};
     row.weights[symbol]=(row.weights[symbol] || 0)+holding.weight;rows.set(holding.key,row);
   }
   return Array.from(rows.values()).filter(row=>{
     const count=symbols.filter(symbol=>Object.hasOwn(row.weights,symbol)).length;
-    return count>0 && (filter==="all" || (filter==="shared" ? count>=2 : count===1)) && `${row.name} ${row.symbol} ${row.key}`.toLocaleLowerCase().includes(query);
+    return count>0 && (filter==="all" || (filter==="shared" ? count>=2 : count===1)) && `${instrumentName({target:row.key,name:row.name})} ${row.name} ${row.symbol} ${row.key}`.toLocaleLowerCase().includes(query);
   }).sort((a,b)=>Math.max(...Object.values(b.weights))-Math.max(...Object.values(a.weights)) || a.key.localeCompare(b.key));
+}
+
+function etfHoldingName(row) {
+  return row.type === "stock" && row.key ? instrumentName({target:row.key,name:row.name}) : row.name;
 }
 
 function etfFilteredHoldings(fund, {search="",type="all",sort="weight-desc"}={}) {
   const query=search.trim().toLocaleLowerCase();
-  return (fund?.holdings || []).filter(row=>(type==="all" || (type==="stock" ? row.type==="stock" : row.type!=="stock")) && `${row.name} ${row.symbol}`.toLocaleLowerCase().includes(query))
-    .slice().sort((a,b)=>sort==="source" ? a.source_row-b.source_row : sort==="name" ? a.name.localeCompare(b.name) : (sort==="weight-asc" ? a.weight-b.weight : b.weight-a.weight) || a.source_row-b.source_row);
+  return (fund?.holdings || []).filter(row=>(type==="all" || (type==="stock" ? row.type==="stock" : row.type!=="stock")) && `${etfHoldingName(row)} ${row.name} ${row.symbol}`.toLocaleLowerCase().includes(query))
+    .slice().sort((a,b)=>sort==="source" ? a.source_row-b.source_row : sort==="name" ? etfHoldingName(a).localeCompare(etfHoldingName(b)) : (sort==="weight-asc" ? a.weight-b.weight : b.weight-a.weight) || a.source_row-b.source_row);
 }
 
 function etfTable(headers) {
   const table=el("table","etf-table"),head=el("thead"),row=el("tr");
+  table.style.minWidth=`${Math.max(560,headers.length*160)}px`;
   for (const header of headers) {const cell=el("th");cell.scope="col";cell.append(typeof header==="string" ? el("span","",header) : header);row.append(cell);}
   head.append(row);const body=el("tbody");table.append(head,body);return {table,body};
 }
 
 function etfChoose(symbol) {
+  researchState.etfSelectionEdited=true;
   researchState.etfSelected=symbol;renderEtfResearch(true);
 }
 
+async function changeEtfSelection() {
+  researchState.etfSelectionEdited=true;
+  clearTimeout(researchState.etfTimer);
+  const input=researchEl("etf-symbols");
+  try {
+    const symbols=parseEtfSelection(input.value);input.setAttribute("aria-invalid","false");
+    researchState.etfSymbols=symbols;researchState.etfPair=null;
+    if(!symbols.includes(researchState.etfSelected))researchState.etfSelected=symbols[0];
+    if(typeof saveStartupPreferences==="function")saveStartupPreferences();
+    renderEtfResearch(true);await loadEtfSelection();
+  } catch(error) {input.setAttribute("aria-invalid","true");researchEl("etf-load-status").textContent=error.message;}
+}
+
+async function loadEtfSelection() {
+  if(researchEl("etf-symbols").getAttribute?.("aria-invalid")==="true")return;
+  const generation=++researchState.etfLoad,symbols=researchState.etfSymbols.slice();
+  const status=researchEl("etf-load-status");status.textContent="正在读取公开行情与持仓…";
+  const queue=symbols.slice();let completed=0;
+  const worker=async()=>{while(queue.length && generation===researchState.etfLoad){
+    const symbol=queue.shift();
+    try {
+      const result=await api(`/api/research/etf?symbol=${encodeURIComponent(symbol)}`);
+      if(generation!==researchState.etfLoad)return;
+      if(!result.market && researchState.etfRemote[symbol]?.market){result.market=researchState.etfRemote[symbol].market;result.warnings.push("保留上次行情样本，尚未更新；以样本时间为准。");}
+      researchState.etfRemote[symbol]=result;
+      if(typeof rememberStartupResponse==="function")rememberStartupResponse(`/api/research/etf?symbol=${encodeURIComponent(symbol)}`,result);
+      if(result.fund){
+        researchState.etf ||= {payload:{funds:{}}};
+        const old=researchState.etf.payload.funds[symbol];
+        if(!old || result.fund.as_of>=old.as_of)researchState.etf.payload.funds[symbol]=result.fund;
+      }
+    }catch(error){
+      if(generation!==researchState.etfLoad)return;
+      researchState.etfRemote[symbol]={...researchState.etfRemote[symbol],warnings:[`加载失败，保留上次资料：${error.message}`]};
+    }
+    completed++;status.textContent=`已检查 ${completed} / ${symbols.length} · 各 ETF 的资料时间与缺失项见下方`;
+    renderEtfResearch(true);
+  }};
+  await Promise.all([worker(),worker()]);
+}
+
 function renderEtfResearch(force=false) {
+  const etfSymbols=researchState.etfSymbols,remote=researchState.etfRemote;
+  const metaFor=symbol=>etfMeta(symbol,remote[symbol]?.market);
   const snapshot=researchState.etf, funds=snapshot?.payload?.funds || {}, panel=researchEl("research-etf-panel");
-  const signature=JSON.stringify([snapshot,researchState.etfSelected,researchState.etfPair]);
+  const signature=JSON.stringify([snapshot,etfSymbols,remote,researchState.etfSelected,researchState.etfPair]);
   if (!force && panel.dataset.signature===signature) return;
   panel.dataset.signature=signature;
   const focused=document.activeElement?.dataset?.etfFocus;
   const available=etfSymbols.filter(symbol=>funds[symbol]);
-  researchEl("etf-coverage").textContent=`${available.length} / 4 已导入`;
+  researchEl("etf-coverage").textContent=`${available.length} / ${etfSymbols.length} 已有持仓`;
+  if(document.activeElement!==researchEl("etf-symbols") && researchEl("etf-symbols").getAttribute("aria-invalid")!=="true")researchEl("etf-symbols").value=etfSymbols.join(", ");
+  const importSelect=researchEl("etf-import-symbol"),previousImport=importSelect.value;
+  importSelect.replaceChildren(...etfSymbols.map(symbol=>{const option=el("option","",symbol);option.value=symbol;return option;}));
+  if(etfSymbols.includes(previousImport))importSelect.value=previousImport;
   const headers=["比较维度",...etfSymbols.map(symbol=>{
     const node=el("div","etf-column-heading"),button=el("button","text-button",symbol);button.type="button";button.dataset.etfFocus=`head:${symbol}`;
     button.setAttribute("aria-label",`展开 ${symbol} 完整持仓`);button.setAttribute("aria-pressed",String(researchState.etfSelected===symbol));button.addEventListener("click",()=>etfChoose(symbol));
-    node.append(button,el("strong","",etfCatalog[symbol].theme),instrumentBriefNode(`US:${symbol}`));return node;
+    node.append(button,el("strong","",metaFor(symbol).theme),el("small","",metaFor(symbol).name));return node;
   })];
   const summary=etfTable(headers),stats=Object.fromEntries(etfSymbols.map(symbol=>[symbol,etfStatistics(funds[symbol])]));
   const metrics=[
-    ["投资范围",symbol=>etfCatalog[symbol].scope],
-    ["权重方式",symbol=>etfCatalog[symbol].weighting],
-    ["年费用率",symbol=>`${researchNumber(etfCatalog[symbol].fee)}% · ${etfCatalog[symbol].feeDate}`],
     ["持仓日期",symbol=>funds[symbol]?.as_of || "待导入"],
-    ["股票 / 全部项目",symbol=>stats[symbol] ? `${stats[symbol].stocks} / ${stats[symbol].items}` : etfCatalog[symbol].declared || "待导入"],
+    ["股票 / 全部项目",symbol=>stats[symbol] ? `${stats[symbol].stocks} / ${stats[symbol].items}` : "未取得"],
+    ["行情样本截至",symbol=>researchDate(etfMarketAnalysis(remote[symbol]?.market,symbol)?.as_of)],
+    ["近 20 交易日价格变化",symbol=>researchNumber(etfMarketAnalysis(remote[symbol]?.market,symbol)?.change20,2,"%")],
+    ["近 60 交易日价格变化",symbol=>researchNumber(etfMarketAnalysis(remote[symbol]?.market,symbol)?.change60,2,"%")],
+    ["行情计算口径",symbol=>etfMarketAnalysis(remote[symbol]?.market,symbol)?.basis || "待核验"],
+    ["趋势判断（非预测）",symbol=>etfAnalysis(funds[symbol],remote[symbol]?.market,symbol).stance],
     ["前十大正权重股票",symbol=>stats[symbol] ? `${researchNumber(stats[symbol].top10)}%` : "--"],
     ["最大股票权重",symbol=>stats[symbol]?.largest ? `${stats[symbol].largest.symbol} · ${researchNumber(stats[symbol].largest.weight)}%` : "--"],
     ["非股票净权重",symbol=>stats[symbol] ? `${researchNumber(stats[symbol].other)}%` : "--"],
     ["全部项目权重合计",symbol=>stats[symbol] ? `${researchNumber(stats[symbol].total)}%` : "--"],
+    ["持仓结构提示（推断）",symbol=>etfAnalysis(funds[symbol],remote[symbol]?.market,symbol).inference],
+    ["投资范围",symbol=>metaFor(symbol).scope],
+    ["权重方式",symbol=>metaFor(symbol).weighting],
+    ["年费用率",symbol=>metaFor(symbol).fee==null?"待核验":`${researchNumber(metaFor(symbol).fee)}% · ${metaFor(symbol).feeDate}`],
   ];
   for (const [label,value] of metrics) {
     const row=el("tr"),heading=el("th","",label);heading.scope="row";row.append(heading);
@@ -629,8 +851,8 @@ function renderEtfResearch(force=false) {
     }
     summary.body.append(row);
   }
-  const sourceRow=el("tr"),sourceHeading=el("th","","官方依据");sourceHeading.scope="row";sourceRow.append(sourceHeading);
-  for (const symbol of etfSymbols) {const cell=el("td");researchLink(cell,"基金官网",etfCatalog[symbol].source);if(etfCatalog[symbol].methodology)researchLink(cell,symbol==="BUG"?"指数摘要（2023）":"指数方法",etfCatalog[symbol].methodology);sourceRow.append(cell);}
+  const sourceRow=el("tr"),sourceHeading=el("th","","来源与状态");sourceHeading.scope="row";sourceRow.append(sourceHeading);
+  for (const symbol of etfSymbols) {const cell=el("td"),meta=metaFor(symbol);researchLink(cell,etfCatalog[symbol]?"基金官网":"行情来源",meta.source);if(funds[symbol]?.source_url)researchLink(cell,"持仓原文",funds[symbol].source_url);for(const warning of remote[symbol]?.warnings||[])cell.append(el("p","quiet-note",warning));sourceRow.append(cell);}
   summary.body.append(sourceRow);researchEl("etf-comparison").replaceChildren(summary.table);
   const matrix=etfTable(["ETF",...etfSymbols]);
   for (const first of etfSymbols) {
@@ -644,7 +866,7 @@ function renderEtfResearch(force=false) {
         button.title=`${first} ${funds[first].as_of} / ${second} ${funds[second].as_of}`;
         button.setAttribute("aria-label",`查看 ${first} 与 ${second} 共同持仓，${overlap.count} 个股票，加权交集 ${researchNumber(overlap.weight)} 个百分点`);
         button.setAttribute("aria-pressed",String(researchState.etfPair?.includes(first) && researchState.etfPair?.includes(second)));
-        button.addEventListener("click",()=>{researchState.etfPair=[first,second];researchEl("etf-overlap-filter").value="shared";renderEtfResearch(true);});cell.append(button);
+        button.addEventListener("click",()=>{researchState.etfSelectionEdited=true;researchState.etfPair=[first,second];researchEl("etf-overlap-filter").value="shared";renderEtfResearch(true);});cell.append(button);
       }
       row.append(cell);
     }
@@ -653,12 +875,12 @@ function renderEtfResearch(force=false) {
   researchEl("etf-overlap-matrix").replaceChildren(matrix.table);
   const filter=researchEl("etf-overlap-filter").value, symbols=researchState.etfPair || etfSymbols;
   const compareRows=etfCompareRows(funds,{symbols,filter,search:researchEl("etf-overlap-search").value});
-  const partial=available.length<4;
+  const partial=available.length<etfSymbols.length;
   researchEl("etf-pair-reset").hidden=!researchState.etfPair;
-  researchEl("etf-overlap-count").textContent=`${researchState.etfPair ? symbols.join(" × ") : "四只对照"} · ${compareRows.length} 条${partial ? " · 数据未齐，仅比较已导入基金" : ""}${filter==="unique" && partial ? "，不能据此认定四只中的独有持仓" : ""}`;
+  researchEl("etf-overlap-count").textContent=`${researchState.etfPair ? symbols.join(" × ") : `${etfSymbols.length} 只对照`} · ${compareRows.length} 条${partial ? " · 数据未齐，仅比较已有持仓" : ""}${filter==="unique" && partial ? "，不能据此认定所选组合中的独有持仓" : ""}`;
   const comparison=etfTable(["公司 / 代码",...etfSymbols]);
   for (const item of compareRows) {
-    const row=el("tr"),identity=el("td");identity.append(el("strong","",item.name),el("small","etf-code",item.key),instrumentBriefNode({target:item.key}));row.append(identity);
+    const row=el("tr"),identity=el("td");identity.append(el("strong","",instrumentName({target:item.key,name:item.name})),el("small","etf-code",item.key),instrumentBriefNode({target:item.key}));row.append(identity);
     for (const symbol of etfSymbols) row.append(el("td",funds[symbol] ? "etf-weight" : "etf-missing",!funds[symbol] ? "待导入" : Object.hasOwn(item.weights,symbol) ? `${researchNumber(item.weights[symbol])}%` : "未持有"));
     comparison.body.append(row);
   }
@@ -670,7 +892,7 @@ function renderEtfResearch(force=false) {
 }
 
 function renderEtfHoldings(funds) {
-  const symbol=researchState.etfSelected,fund=funds[symbol],meta=etfCatalog[symbol],container=researchEl("etf-holdings-list"),source=researchEl("etf-selected-source");
+  const symbol=researchState.etfSelected,fund=funds[symbol],market=researchState.etfRemote[symbol]?.market,meta=etfMeta(symbol,market),container=researchEl("etf-holdings-list"),source=researchEl("etf-selected-source");
   source.replaceChildren(el("strong","",`${symbol} · ${meta.name}`),instrumentBriefNode(`US:${symbol}`));
   if (fund) {
     const stats=etfStatistics(fund);
@@ -678,9 +900,10 @@ function renderEtfHoldings(funds) {
     if(stats.unmatched)source.append(el("span","negative",`${stats.unmatched} 个股票代码未识别，未纳入重叠计算`));
     if(fund.source_url)researchLink(source,"原始持仓文件",fund.source_url);
     for(const url of fund.source_urls || [])researchLink(source,"文件记录的来源",url);
-    if(researchState.etf.id){const button=el("button","text-button","冻结数据与版本");button.type="button";button.addEventListener("click",()=>openResearchDetail("inputs",researchState.etf.id));source.append(button);}
+    const inputId=researchState.etfRemote[symbol]?.input_id || researchState.etf.id;
+    if(inputId){const button=el("button","text-button","冻结数据与版本");button.type="button";button.addEventListener("click",()=>openResearchDetail("inputs",inputId));source.append(button);}
   } else source.append(el("span","",meta.declared || "尚未取得完整持仓"));
-  researchLink(source,"基金官网",meta.source);
+  researchLink(source,etfCatalog[symbol]?"基金官网":"行情来源",meta.source);
   const rows=etfFilteredHoldings(fund,{search:researchEl("etf-holding-search").value,type:researchEl("etf-holding-type").value,sort:researchEl("etf-holding-sort").value});
   researchEl("etf-holding-count").textContent=fund ? `${rows.length} / ${fund.holdings.length} 条项目 · 权重沿用原文` : "待导入完整文件";
   researchEl("etf-holdings-export").disabled=!fund;
@@ -688,13 +911,15 @@ function renderEtfHoldings(funds) {
   else {
     const table=etfTable(["公司 / 持仓项目","代码","类型","净资产权重","原文行号"]);
     for (const item of rows) {
-      const row=el("tr"),name=el("td");name.append(el("strong","",item.name));if(item.type==="stock")name.append(instrumentBriefNode({target:item.key}));
+      const row=el("tr"),name=el("td");name.append(el("strong","",etfHoldingName(item)));if(item.type==="stock")name.append(instrumentBriefNode({target:item.key}));
       row.append(name,el("td","etf-code",item.symbol || "--"),el("td","",etfTypes[item.type] || item.type),el("td",`etf-weight${item.weight<0 ? " negative" : ""}`,etfWeight(item.weight)),el("td","etf-weight",String(item.source_row)));
       table.body.append(row);
     }
     container.replaceChildren(table.table);
   }
-  const focus=researchEl("etf-research-focus");focus.replaceChildren(el("h3","",`${symbol} · 研究关注`),el("p","",meta.focus));
+  const analysis=etfAnalysis(fund,market,symbol),focus=researchEl("etf-research-focus");focus.replaceChildren(el("h3","",`${symbol} · 自动分析`));
+  for(const fact of analysis.facts)focus.append(el("p","",`事实：${fact}`));
+  focus.append(el("p","",`推断：${analysis.inference}`),el("p","",meta.focus));
   const conditions=el("div","etf-conditions");for(const [label,value] of [["有条件看多（推断）",meta.condition],["失效 / 反证线索",meta.invalidation]]){const section=el("div");section.append(el("strong","",label),el("p","",value));conditions.append(section);}focus.append(conditions);
 }
 
@@ -714,26 +939,41 @@ async function importEtfFile(event) {
 function exportEtfHoldings() {
   const symbol=researchState.etfSelected,fund=researchState.etf?.payload?.funds?.[symbol];if(!fund)return;
   const quote=value=>`"${String(value ?? "").replaceAll('"','""')}"`;
-  const lines=[["ETF","持仓日期","公司","代码","类型","净资产权重(%)","原文权重","原文行号"],...fund.holdings.map(row=>[symbol,fund.as_of,row.name,row.symbol,etfTypes[row.type],row.weight,row.raw_weight,row.source_row])];
+  const lines=[["ETF","持仓日期","公司","代码","类型","净资产权重(%)","原文权重","原文行号"],...fund.holdings.map(row=>[symbol,fund.as_of,etfHoldingName(row),row.symbol,etfTypes[row.type],row.weight,row.raw_weight,row.source_row])];
   const url=URL.createObjectURL(new Blob(["\ufeff",lines.map(row=>row.map(quote).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"}));
   const link=el("a");link.href=url;link.download=`${symbol}_holdings_${fund.as_of}.csv`;link.click();window.setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
 document.addEventListener("DOMContentLoaded",()=>{
+  researchEl("etf-add-form").addEventListener("submit",addEtfSelection);
+  researchEl("etf-selection-form").addEventListener("submit",event=>{event.preventDefault();changeEtfSelection();});
+  researchEl("etf-symbols").addEventListener("input",event=>{
+    researchState.etfSelectionEdited=true;
+    ++researchState.etfLoad;clearTimeout(researchState.etfTimer);
+    if(!event.isComposing)researchState.etfTimer=setTimeout(changeEtfSelection,800);
+  });
   const etfKind=el("option","","ETF 持仓快照");etfKind.value="etf_holdings";researchEl("research-kind").append(etfKind);
   researchEl("etf-import-form").addEventListener("submit",importEtfFile);
   researchEl("etf-holdings-export").addEventListener("click",exportEtfHoldings);
-  ["etf-holding-search","etf-overlap-search"].forEach(id=>researchEl(id).addEventListener("input",()=>renderEtfResearch(true)));
-  ["etf-holding-type","etf-holding-sort","etf-overlap-filter"].forEach(id=>researchEl(id).addEventListener("change",()=>renderEtfResearch(true)));
-  researchEl("etf-pair-reset").addEventListener("click",()=>{researchState.etfPair=null;renderEtfResearch(true);});
+  ["etf-holding-search","etf-overlap-search"].forEach(id=>researchEl(id).addEventListener("input",()=>{researchState.etfSelectionEdited=true;renderEtfResearch(true);}));
+  ["etf-holding-type","etf-holding-sort","etf-overlap-filter"].forEach(id=>researchEl(id).addEventListener("change",()=>{researchState.etfSelectionEdited=true;renderEtfResearch(true);}));
+  researchEl("etf-pair-reset").addEventListener("click",()=>{researchState.etfSelectionEdited=true;researchState.etfPair=null;renderEtfResearch(true);});
   const financialKind=el("option","","公开年度财报");financialKind.value="fundamentals";researchEl("research-kind").append(financialKind);
   const cardKind=el("option","","公司与策略研究");cardKind.value="research_card";researchEl("research-kind").append(cardKind);
-  researchEl("strategy-new").addEventListener("click",()=>openStrategyEditor());
+  const valuationKind=el("option","","估值研究假设");valuationKind.value="valuation_model";researchEl("research-kind").append(valuationKind);
+  researchEl("strategy-new").addEventListener("click",openResearchCompanyAdd);
+  researchEl("strategy-compare-add").addEventListener("click",()=>{
+    const card=researchState.cards?.items.find(item=>item.id===researchEl("strategy-compare-select").value);
+    if(card && strategyComparison.size<4){strategyComparison.set(card.id,card);renderStrategyComparison();}
+  });
+  researchEl("research-company-add").addEventListener("submit",addResearchCompany);
+  researchEl("research-company-private").addEventListener("click",()=>openStrategyEditor({kind:"cvc"}));
+  researchEl("research-company-cancel").addEventListener("click",()=>{researchEl("research-company-add").hidden=true;researchEl("strategy-new").focus();});
   researchEl("strategy-editor").addEventListener("submit",saveStrategyCard);
-  researchEl("company-search").addEventListener("input",renderCompanyLandscape);
-  ["company-layer","company-entity"].forEach(id=>researchEl(id).addEventListener("change",renderCompanyLandscape));
+  researchEl("company-search").addEventListener("input",()=>{researchState.navigationEdited=true;renderCompanyLandscape();});
+  ["company-layer","company-entity"].forEach(id=>researchEl(id).addEventListener("change",()=>{researchState.navigationEdited=true;renderCompanyLandscape();}));
   researchEl("company-reset").addEventListener("click",()=>{
-    researchEl("company-search").value="";researchEl("company-layer").value="all";researchEl("company-entity").value="all";renderCompanyLandscape();researchEl("company-search").focus();
+    researchState.navigationEdited=true;researchEl("company-search").value="";researchEl("company-layer").value="all";researchEl("company-entity").value="all";renderCompanyLandscape();researchEl("company-search").focus();
   });
   researchEl("company-list").addEventListener("keydown",event=>{
     const buttons=Array.from(event.currentTarget.querySelectorAll("button")),index=buttons.indexOf(event.target);
@@ -741,11 +981,32 @@ document.addEventListener("DOMContentLoaded",()=>{
     event.preventDefault();const next=event.key==="Home" ? 0 : event.key==="End" ? buttons.length-1 : Math.max(0,Math.min(buttons.length-1,index+(event.key==="ArrowDown" ? 1 : -1)));
     buttons[next].focus();buttons[next].click();
   });
-  ["strategy-search","strategy-stance"].forEach(id=>researchEl(id).addEventListener("change",()=>{researchState.cardOffset=0;refreshResearch();}));
-  document.querySelectorAll("#research-tabs button").forEach(button=>button.addEventListener("click",()=>{
+  ["strategy-search","strategy-stance"].forEach(id=>researchEl(id).addEventListener("change",()=>{researchState.navigationEdited=true;researchState.cardOffset=0;refreshResearch();}));
+  researchEl("strategy-search").addEventListener("input",()=>{researchState.navigationEdited=true;});
+  const companyTabs=Array.from(document.querySelectorAll("#company-research-views button"));
+  companyTabs.forEach((button,index)=>{
+    button.addEventListener("click",()=>selectCompanyResearch(button.dataset.tab));
+    button.addEventListener("keydown",event=>{
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+      event.preventDefault();
+      const next=event.key==="Home"?0:event.key==="End"?companyTabs.length-1:(index+(event.key==="ArrowRight"?1:-1)+companyTabs.length)%companyTabs.length;
+      companyTabs[next].focus();companyTabs[next].click();
+    });
+  });
+  document.querySelectorAll("#research-tabs button, #market-nav [data-tab], #backtest-tabs [data-tab]").forEach(button=>button.addEventListener("click",()=>{
+    researchState.navigationEdited=true;
     researchState.tab=button.dataset.tab;
     setView("research");
   }));
+  const evidenceTabs=[...document.querySelectorAll("#research-evidence-views button")];
+  evidenceTabs.forEach((button,index)=>{
+    button.addEventListener("click",()=>{researchState.navigationEdited=true;researchState.tab=button.dataset.tab;setView("research");});
+    button.addEventListener("keydown",event=>{
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+      event.preventDefault();const next=event.key==="Home"?0:event.key==="End"?evidenceTabs.length-1:1-index;
+      evidenceTabs[next].focus();evidenceTabs[next].click();
+    });
+  });
   ["research-asset","research-horizon","research-status","research-kind"].forEach(id=>researchEl(id).addEventListener("change",()=>{briefAfterTitle("research-asset",{asset:researchEl("research-asset").value});researchState.offset=0;researchState.inputOffset=0;refreshResearch();}));
   researchEl("research-refresh").addEventListener("click",()=>refreshResearch());
   researchEl("research-cohort").addEventListener("change",renderResearchGroup);

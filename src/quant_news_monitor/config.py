@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import WatchItem
@@ -11,6 +11,7 @@ from .models import WatchItem
 class AnalysisConfig:
     mode: str
     model: str
+    api_key: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -50,19 +51,25 @@ def _resolve(base: Path, value: str) -> Path:
     return path if path.is_absolute() else (base / path).resolve()
 
 
+def analysis_config_from_raw(raw, config_path) -> AnalysisConfig:
+    from .ai_credentials import OpenAICredentials
+    values = raw.get("analysis") or {}
+    mode = str(values.get("mode", "auto")).lower()
+    if mode not in {"auto", "rules", "openai"}:
+        raise ValueError("analysis.mode 必须是 auto、rules 或 openai")
+    return AnalysisConfig(mode=mode, model=str(values.get("model", "gpt-5-mini")),
+                          api_key=OpenAICredentials(config_path).available_key())
+
+
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path).resolve()
     with config_path.open("r", encoding="utf-8") as handle:
         raw = json.load(handle)
 
     base = config_path.parent
-    analysis_raw = raw.get("analysis", {})
+    analysis = analysis_config_from_raw(raw, config_path)
     source_raw = raw.get("sources", {})
     storage_raw = raw.get("storage", {})
-
-    mode = str(analysis_raw.get("mode", "auto")).lower()
-    if mode not in {"auto", "rules", "openai"}:
-        raise ValueError("analysis.mode 必须是 auto、rules 或 openai")
 
     threshold = float(raw.get("alert_threshold", 0.35))
     if not 0.0 <= threshold <= 1.0:
@@ -104,10 +111,7 @@ def load_config(path: str | Path) -> AppConfig:
         lookback_hours=max(1, int(raw.get("lookback_hours", 72))),
         max_items_per_asset=max(1, min(100,int(raw.get("max_items_per_asset", 30)))),
         alert_threshold=threshold,
-        analysis=AnalysisConfig(
-            mode=mode,
-            model=str(analysis_raw.get("model", "gpt-5-mini")),
-        ),
+        analysis=analysis,
         sources=SourceConfig(
             google_news_rss=bool(source_raw.get("google_news_rss", True)),
             yahoo_finance_rss=bool(source_raw.get("yahoo_finance_rss", True)),

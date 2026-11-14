@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS input_versions (
  UNIQUE(kind,identity,version)
 );
 CREATE INDEX IF NOT EXISTS input_identity ON input_versions(kind,identity,id DESC);
+CREATE INDEX IF NOT EXISTS input_kind_recent ON input_versions(kind,id DESC);
 CREATE TABLE IF NOT EXISTS analysis_records (
  id TEXT PRIMARY KEY, input_id INTEGER NOT NULL REFERENCES input_versions(id), target TEXT NOT NULL,
  started_at TEXT NOT NULL, completed_at TEXT NOT NULL, engine TEXT NOT NULL,
@@ -131,7 +132,8 @@ class ResearchLedger:
     def observe(self, kind: str, identity: str, payload: dict, *, published_at: str | None = None, now: datetime | None = None,
                 expected_version: int | None = None) -> dict:
         observed = iso_utc(now or utc_now())
-        encoded, checksum = canonical(payload), digest(payload)
+        encoded = canonical(payload)
+        checksum = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         with self.session() as db:
             db.execute("BEGIN IMMEDIATE")
             latest = db.execute("SELECT * FROM input_versions WHERE kind=? AND identity=? ORDER BY id DESC LIMIT 1", (kind, identity)).fetchone()
@@ -291,6 +293,16 @@ class ResearchLedger:
                  and search.casefold() in f"{card['name']} {card['target']}".casefold()]
         return {"items": cards[offset:offset+50], "total": len(cards), "offset": offset, "page_size": 50}
 
+    def position_cards(self, targets: set[str]) -> list[dict]:
+        if not targets:
+            return []
+        with self.session() as db:
+            rows = db.execute("""SELECT v.* FROM input_versions v WHERE v.kind='research_card'
+                AND v.id=(SELECT MAX(p.id) FROM input_versions p WHERE p.kind=v.kind AND p.identity=v.identity)
+                ORDER BY v.id DESC""").fetchall()
+        cards = [{**json.loads(r["payload"]), "version": r["version"], "observed_at": r["observed_at"]} for r in rows]
+        return [r for r in cards if str(r.get("target", "")).strip().upper() in targets]
+
     def save_card(self, payload: dict) -> dict:
         if not isinstance(payload, dict):
             raise ValueError("研究内容格式不正确")
@@ -347,6 +359,59 @@ class ResearchLedger:
         card["score_kind"] = "conditional_research_assessment"
         saved = self.observe("research_card", identifier, card, expected_version=version)
         return {**card, "version": saved["version"], "input_version_id": saved["id"], "observed_at": saved["observed_at"]}
+
+    def valuations(self, *, offset: int = 0) -> dict:
+        where = "v.kind='valuation_model' AND v.id=(SELECT MAX(p.id) FROM input_versions p WHERE p.kind=v.kind AND p.identity=v.identity)"
+        with self.session() as db:
+            total = db.execute("SELECT COUNT(*) FROM input_versions v WHERE " + where).fetchone()[0]
+            rows = db.execute("SELECT v.* FROM input_versions v WHERE " + where + " ORDER BY v.id DESC LIMIT 30 OFFSET ?", (max(0, offset),)).fetchall()
+        return {"items": [{"id": row["identity"], "version": row["version"], "observed_at": row["observed_at"], "snapshot": json.loads(row["payload"])} for row in rows], "total": total}
+
+    def save_valuation(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("估值记录格式无效")
+        identifier = payload.get("id") or uuid.uuid4().hex
+        version = payload.get("base_version", 0)
+        if not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{32}", identifier):
+            raise ValueError("估值标识无效")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+            raise ValueError("估值版本无效")
+        snapshot = payload.get("snapshot")
+        if not isinstance(snapshot, dict) or snapshot.get("engine") != "stock-valuation-v1" or snapshot.get("model") not in {"dcf", "ddm", "multiples", "reverse", "return", "capital"}:
+            raise ValueError("估值模型或版本不受支持")
+        meta, inputs = snapshot.get("meta"), snapshot.get("inputs")
+        if not isinstance(meta, dict) or not isinstance(inputs, dict) or len(inputs) > 40:
+            raise ValueError("估值资料格式无效")
+        clean_meta = {}
+        for key, limit in (("name", 120), ("target", 120), ("currency", 3), ("data_as_of", 10), ("price_as_of", 10), ("source_url", 2048), ("notes", 4000)):
+            value = meta.get(key, "")
+            if not isinstance(value, str) or len(value) > limit:
+                raise ValueError("估值资料过长或格式无效")
+            clean_meta[key] = value.strip()
+        if not clean_meta["name"] or not re.fullmatch(r"(US|CN|HK|KR):[A-Z0-9.^=_-]{1,24}", clean_meta["target"]) or clean_meta["currency"] not in {"CNY", "USD", "HKD", "KRW"}:
+            raise ValueError("请填写研究名称、标的及币种")
+        for key in ("data_as_of", "price_as_of"):
+            if clean_meta[key]:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean_meta[key]):
+                    raise ValueError("日期格式无效")
+                date.fromisoformat(clean_meta[key])
+        if clean_meta["source_url"]:
+            parsed = urlsplit(clean_meta["source_url"])
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("来源链接无效")
+        # Store bounded assumptions only; all displayed results are recomputed by the versioned client kernel.
+        for key, value in inputs.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[a-z_]{1,40}", key):
+                raise ValueError("参数名称无效")
+            values = value if isinstance(value, list) else [value]
+            if len(values) > 30:
+                raise ValueError("逐年现金流最多30年")
+            for item in values:
+                if isinstance(item, bool) or not isinstance(item, (str, int, float)) or isinstance(item, str) and len(item) > 120 or isinstance(item, (int, float)) and (not math.isfinite(item) or abs(item) > 1e15):
+                    raise ValueError("估值参数无效")
+        clean = {"engine": snapshot["engine"], "model": snapshot["model"], "meta": clean_meta, "inputs": inputs}
+        saved = self.observe("valuation_model", identifier, clean, expected_version=version)
+        return {"id": identifier, "version": saved["version"], "observed_at": saved["observed_at"], "snapshot": clean}
 
     def statistics(self, *, asset: str = "all", horizon: str = "all") -> dict:
         conditions, args = [], []

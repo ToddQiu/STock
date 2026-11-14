@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.client import HTTPException
-from datetime import datetime, timezone
+from datetime import timezone
 from email.utils import parsedate_to_datetime
 
 

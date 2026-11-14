@@ -390,7 +390,7 @@ async function openSocialKeywords() {
   if((!socialState.data || socialState.readFailed) && !await refreshSocial())return;
   socialKeywordState.drafts.clear();
   const select=document.getElementById("social-keyword-stock");select.replaceChildren();
-  (socialState.data.keyword_settings || []).forEach(item=>select.add(new Option(`${item.symbol} · ${item.name}`,item.key)));
+  (socialState.data.keyword_settings || []).forEach(item=>select.add(new Option(`${item.symbol} · ${instrumentName({target:item.key,name:item.name})}`,item.key)));
   populateSocialKeywords();document.getElementById("social-keywords-dialog").showModal();
 }
 

@@ -73,8 +73,10 @@ def news_clauses(item: NewsItem, watchlist: tuple[WatchItem, ...] = ()) -> list[
     target_context = matches_stock(full_text, watch) or bool(re.search(r"\bcompany\b|公司", full_text, re.I))
     owner = item.symbol if target_context and not any(matches_stock(full_text, other) for other in other_watches) else None
     for field, body in (("title", item.title), ("summary", item.summary)):
-        # Split contrast and coordinated assertions so their owners and negation scopes cannot leak.
-        for part in re.split(r"[;；。\n!?！？]|(?<!\d)[,，](?!\d)|\.(?=\s)|\b(?:but|while|whereas|however|and)\b|但是|然而|不过|不過|但|而", body, flags=re.I):
+        # Keep connectors: coordinated predicates inherit scope, new subjects and contrast do not.
+        parts = re.split(r"([;；。\n!?！？]|(?<!\d)[,，](?!\d)|\.(?=\s)|\b(?:but|while|whereas|however|and|or)\b|但是|然而|不过|不過|并且|並且|以及|且|但|而)", body, flags=re.I)
+        for index in range(0, len(parts), 2):
+            part = parts[index]
             clause = part.strip()
             if not clause:
                 continue
@@ -94,7 +96,8 @@ def news_clauses(item: NewsItem, watchlist: tuple[WatchItem, ...] = ()) -> list[
                 attribution = "missing"
             result.append({"text": clause, "field": field, "target": item.symbol,
                            "attribution": attribution, "belongs_to_target": owner == item.symbol,
-                           "owner": owner})
+                           "owner": owner, "continues_assertion": attribution == "continuation" and index > 0
+                           and parts[index-1].strip().casefold() in {"and", "or", ",", "，", "并且", "並且", "以及", "且"}})
     return result
 
 

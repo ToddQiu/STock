@@ -3,6 +3,7 @@
 // Display memory only: never restore credentials, unsaved forms, or server configuration.
 const startupMemory = {
   version: 1, responses: new Map(), timer: null, database: null, ready: false, previewAt: null,
+  writes: Promise.resolve(), writeRevision: 0, storageError: null,
   controls: ["news-search", "news-language", "news-sort", "market-filter", "portfolio-search", "event-search", "event-scope", "event-sort",
     "social-search", "social-platform", "social-sort", "social-sample-search", "social-sample-scope",
     "strategy-search", "strategy-stance", "company-search", "company-layer", "company-entity",
@@ -12,11 +13,33 @@ const startupMemory = {
 };
 const STARTUP_PREFS_KEY = "quantify.startup.preferences.v1";
 const startupPaths = new Set(["/api/dashboard", "/api/assets", "/api/news", "/api/social", "/api/research",
-  "/api/research/inputs", "/api/research/cards", "/api/research/companies", "/api/research/earnings", "/api/research/earnings/annotations", "/api/fundamentals", "/api/indices"]);
+  "/api/research/inputs", "/api/research/etf", "/api/research/cards", "/api/research/companies", "/api/research/earnings", "/api/research/earnings/annotations", "/api/fundamentals", "/api/indices"]);
+
+function startupJson(value) {
+  return JSON.stringify(value, (key, item) =>
+    /^(?:password|token|api_key|secret|authorization|feed_url)$|_(?:token|password|secret|api_key)$/i.test(key) ? undefined : item);
+}
 
 function startupSafePayload(value) {
-  return JSON.parse(JSON.stringify(value, (key, item) =>
-    /^(?:password|token|api_key|secret|authorization|feed_url)$|_(?:token|password|secret|api_key)$/i.test(key) ? undefined : item));
+  return JSON.parse(startupJson(value));
+}
+
+async function encodeStartupRecord(record) {
+  const json = startupJson(record.payload);
+  if (typeof CompressionStream !== "undefined" && typeof DecompressionStream !== "undefined") {
+    try {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+      const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      return {saved_at:record.saved_at, encoding:"gzip", bytes};
+    } catch { /* Older webviews can retain the original JSON without dropping the dashboard. */ }
+  }
+  return {saved_at:record.saved_at, payload:JSON.parse(json)};
+}
+
+async function decodeStartupRecord(record) {
+  if (record?.encoding !== "gzip") return record;
+  const stream = new Blob([record.bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return {saved_at:record.saved_at, payload:JSON.parse(await new Response(stream).text())};
 }
 
 function startupDatabase() {
@@ -50,26 +73,43 @@ async function startupRead() {
 async function flushStartupMemory() {
   window.clearTimeout(startupMemory.timer);
   startupMemory.timer = null;
-  const records = [];
-  let bytes = 0;
-  for (const [path, record] of [...startupMemory.responses].reverse()) {
-    try {
-      const payload = startupSafePayload(record.payload), size = JSON.stringify(payload).length * 2;
-      if (size > 2_000_000 || bytes + size > 10_000_000) continue;
-      records.unshift([path, {saved_at: record.saved_at, payload}]);
-      bytes += size;
-    } catch { /* Non-serializable responses are not display snapshots. */ }
-  }
+  const revision = ++startupMemory.writeRevision;
   const generation = typeof apiReadGeneration === "undefined" ? 0 : apiReadGeneration;
-  const database = await startupDatabase();
-  if (!database || (typeof apiReadGeneration !== "undefined" && generation !== apiReadGeneration)) return;
-  try {
-    await new Promise(resolve => {
-      const transaction = database.transaction("snapshots", "readwrite");
-      transaction.objectStore("snapshots").put({version:startupMemory.version, records}, "latest");
-      transaction.oncomplete = transaction.onerror = transaction.onabort = () => resolve();
-    });
-  } catch { /* Storage may be disabled or full; normal network reads still work. */ }
+  const current = () => revision === startupMemory.writeRevision &&
+    (typeof apiReadGeneration === "undefined" || generation === apiReadGeneration);
+  const write = async () => {
+    if (!current()) return;
+    try {
+      const database = await startupDatabase();
+      if (!current()) return;
+      if (!database) throw new Error("Display cache unavailable");
+      const records = [];
+      let bytes = 0;
+      // Reserve the last usable dashboard before optional page snapshots consume the budget.
+      const entries = [...startupMemory.responses].reverse().sort(([a], [b]) => Number(b === "/api/dashboard") - Number(a === "/api/dashboard"));
+      for (const [path, record] of entries) {
+        record.encoded ||= encodeStartupRecord(record);
+        const encoded = await record.encoded;
+        if (!current()) return;
+        const size = encoded.bytes?.byteLength ?? JSON.stringify(encoded.payload).length * 2;
+        if (path !== "/api/dashboard" && bytes + size > 10_000_000) continue;
+        records.push([path, encoded]);
+        bytes += size;
+      }
+      await new Promise((resolve, reject) => {
+        const transaction = database.transaction("snapshots", "readwrite");
+        transaction.objectStore("snapshots").put({version:startupMemory.version, records}, "latest");
+        transaction.oncomplete = resolve;
+        transaction.onerror = transaction.onabort = () => reject(new Error("Display cache write failed"));
+      });
+      startupMemory.storageError = null;
+    } catch {
+      // A failed transaction keeps the previous committed snapshot, never an empty replacement.
+      startupMemory.storageError = "启动记忆未能保存，已保留上一次快照";
+    }
+  };
+  startupMemory.writes = startupMemory.writes.then(write, write);
+  return startupMemory.writes;
 }
 
 function rememberStartupResponse(path, payload) {
@@ -81,7 +121,7 @@ function rememberStartupResponse(path, payload) {
   const firstRead = !startupMemory.responses.has(path);
   startupMemory.responses.delete(path);
   startupMemory.responses.set(path, {saved_at: new Date().toISOString(), payload});
-  while (startupMemory.responses.size > 24) startupMemory.responses.delete(startupMemory.responses.keys().next().value);
+  while (startupMemory.responses.size > 24) startupMemory.responses.delete([...startupMemory.responses.keys()].find(key => key !== "/api/dashboard"));
   if (firstRead) { flushStartupMemory(); return; }
   if (startupMemory.timer === null) startupMemory.timer = window.setTimeout(flushStartupMemory, 10_000);
 }
@@ -99,15 +139,16 @@ function captureStartupPreferences() {
   }
   return {
     version: 1, presentationVersion: 2, view: state.currentView, controls,
-    overviewLayout: typeof workbenchState === "undefined" ? "compass" : workbenchState.layout,
+    backtestTab: window.BacktestWorkspace?.tab || "workbench",
     state: {sentimentFilter:state.sentimentFilter, movementMarket:state.movementMarket, movementSortDirection:state.movementSortDirection,
       portfolioTypeFilter:state.portfolioTypeFilter, portfolioSortKey:state.portfolioSortKey,
       portfolioSortDirection:state.portfolioSortDirection},
     research: typeof researchState === "undefined" ? {} : {
       tab:researchState.tab, companyId:researchState.companyId, etfSelected:researchState.etfSelected,
-      etfPair:researchState.etfPair, cardOffset:researchState.cardOffset, offset:researchState.offset, inputOffset:researchState.inputOffset},
+      etfSymbols:researchState.etfSymbols, etfPair:researchState.etfPair, cardOffset:researchState.cardOffset, offset:researchState.offset, inputOffset:researchState.inputOffset},
     social: typeof socialState === "undefined" ? {} : {view:socialView, scope:socialScope, hours:socialState.hours, selected:socialState.selected},
     earningsOffset: typeof earningsState === "undefined" ? 0 : earningsState.offset,
+    earningsSelected: typeof earningsState === "undefined" ? "" : earningsState.selectedSymbol,
   };
 }
 
@@ -117,7 +158,11 @@ function saveStartupPreferences() {
 
 function applyStartupPreferences(saved) {
   if (!saved || saved.version !== 1) return;
+  window.BacktestWorkspace?.select(saved.backtestTab || "workbench");
   for (const id of startupMemory.controls) {
+    if(id.startsWith("etf-") && typeof researchState!=="undefined" && researchState.etfSelectionEdited)continue;
+    if(/^(company|strategy)-/.test(id) && typeof researchState!=="undefined" && researchState.navigationEdited)continue;
+    if(id.startsWith("earnings-") && typeof earningsState!=="undefined" && earningsState.selectionEdited)continue;
     const node = document.getElementById(id), value = saved.controls?.[id];
     if (!node || value === undefined) continue;
     if (node.type === "checkbox") node.checked = value === true;
@@ -132,17 +177,26 @@ function applyStartupPreferences(saved) {
   }
   if (["asc", "desc"].includes(saved.state?.movementSortDirection)) state.movementSortDirection = saved.state.movementSortDirection;
   if (typeof updateMovementSortControls === "function") updateMovementSortControls();
-  if (typeof setOverviewLayout === "function") setOverviewLayout(saved.presentationVersion === 2 ? saved.overviewLayout : "compass");
   for (const [selector, key, attribute] of [["#sentiment-filter button", "sentimentFilter", "value"],
     ["#movement-market-filter button", "movementMarket", "value"], ["[data-portfolio-type]", "portfolioTypeFilter", "portfolioType"]]) {
     document.querySelectorAll(selector).forEach(button => button.classList.toggle("active", button.dataset[attribute] === state[key]));
   }
   if (typeof researchState !== "undefined") {
     const prefs = saved.research || {};
-    if ([...document.querySelectorAll("#research-tabs button")].some(button => button.dataset.tab === prefs.tab)) researchState.tab = prefs.tab;
-    for (const key of ["companyId", "etfSelected"]) if (typeof prefs[key] === "string") researchState[key] = prefs[key];
-    if (Array.isArray(prefs.etfPair) && prefs.etfPair.length === 2 && prefs.etfPair.every(symbol => ["IGV","XSW","WCLD","BUG"].includes(symbol))) researchState.etfPair = prefs.etfPair;
-    for (const key of ["cardOffset", "offset", "inputOffset"]) if (Number.isInteger(prefs[key]) && prefs[key] >= 0) researchState[key] = prefs[key];
+    if (!researchState.navigationEdited) {
+      const tab=prefs.tab==="fundamentals" ? "earnings" : prefs.tab;
+      if ([...document.querySelectorAll("#research-tabs button, #market-nav [data-tab], #backtest-tabs [data-tab], #company-research-views button, #research-evidence-views button")].some(button => button.dataset.tab === tab)) researchState.tab = tab;
+      if (typeof prefs.companyId === "string") researchState.companyId = prefs.companyId;
+    }
+    if (!researchState.etfSelectionEdited) {
+      if(typeof prefs.etfSelected === "string")researchState.etfSelected=prefs.etfSelected;
+      if (Array.isArray(prefs.etfSymbols) && typeof parseEtfSelection==="function") {
+        try {researchState.etfSymbols=parseEtfSelection(prefs.etfSymbols.join(","));}catch { /* Keep defaults for invalid saved values. */ }
+      }
+      if (researchState.etfSymbols && !researchState.etfSymbols.includes(researchState.etfSelected)) researchState.etfSelected=researchState.etfSymbols[0];
+      if (Array.isArray(prefs.etfPair) && prefs.etfPair.length === 2 && prefs.etfPair.every(symbol => (researchState.etfSymbols || ["IGV","XSW","WCLD","BUG"]).includes(symbol))) researchState.etfPair = prefs.etfPair;
+    }
+    for (const key of ["cardOffset", "offset", "inputOffset"]) if (!researchState.navigationEdited && Number.isInteger(prefs[key]) && prefs[key] >= 0) researchState[key] = prefs[key];
   }
   if (typeof socialState !== "undefined") {
     const prefs = saved.social || {};
@@ -157,7 +211,10 @@ function applyStartupPreferences(saved) {
     document.querySelectorAll("#social-window button").forEach(button => button.classList.toggle("active", Number(button.dataset.hours) === socialState.hours));
     document.querySelectorAll("#social-scope-tabs button").forEach(button => button.classList.toggle("active", button.dataset.scope === socialScope));
   }
-  if (typeof earningsState !== "undefined" && Number.isInteger(saved.earningsOffset) && saved.earningsOffset >= 0) earningsState.offset = saved.earningsOffset;
+  if (typeof earningsState !== "undefined" && !earningsState.selectionEdited) {
+    if(Number.isInteger(saved.earningsOffset) && saved.earningsOffset >= 0)earningsState.offset=saved.earningsOffset;
+    if(typeof saved.earningsSelected==="string" && /^[A-Z0-9][A-Z0-9.-]{0,19}$/.test(saved.earningsSelected))earningsState.selectedSymbol=saved.earningsSelected;
+  }
 }
 
 function startupPreview(path, record) {
@@ -196,27 +253,41 @@ function startupPreview(path, record) {
   return data;
 }
 
-async function restoreStartupMemory() {
-  let saved;
-  try { saved = JSON.parse(localStorage.getItem(STARTUP_PREFS_KEY)); } catch {}
-  applyStartupPreferences(saved);
-  if (saved?.version === 1 && [...document.querySelectorAll(".view")].some(node => node.dataset.view === saved.view)) setView(saved.view, {refresh:false});
-  const bundle = await Promise.race([startupRead(), new Promise(resolve => window.setTimeout(() => resolve(null), 500))]);
+async function restoreStartupBundle(bundle, saved, generation) {
+  const current = () => !startupMemory.ready &&
+    (typeof apiReadGeneration === "undefined" || generation === apiReadGeneration);
+  const restored = new Map();
+  if (!current()) return;
   if (bundle?.version === startupMemory.version && Array.isArray(bundle.records)) {
-    for (const [path, record] of bundle.records.slice(-24).filter(item => Array.isArray(item) && item.length === 2)) {
+    for (const [path, stored] of bundle.records.slice(-24).filter(item => Array.isArray(item) && item.length === 2)) {
+      let record;
+      try { record = await decodeStartupRecord(stored); } catch (error) {
+        console.warn("Display cache decode failed", path, error?.name);
+        continue;
+      }
+      if (!current()) return;
       if (typeof path !== "string" || !startupPaths.has(path.split("?")[0]) || !record?.payload || typeof record.payload !== "object" || Array.isArray(record.payload)) continue;
       const age = Date.now() - Date.parse(record.saved_at);
       if (!Number.isFinite(age) || age < -60_000 || age > 30 * 86400_000) continue;
-      startupMemory.responses.set(path, record);
+      if (!startupMemory.responses.has(path)) {
+        startupMemory.responses.set(path, record);
+        restored.set(path, record);
+      }
     }
   }
   const restore = (path, render) => {
+    if (!restored.has(path) || !current()) return;
     const record = startupMemory.responses.get(path);
-    if (!record) return;
+    if (!record || restored.get(path) !== record) return;
+    if (path === "/api/dashboard" && typeof portfolioContext !== "undefined" &&
+        (record.payload.portfolio?.id || "default") !== portfolioContext.id) return;
     try {
       render(startupPreview(path, record));
       startupMemory.previewAt = startupMemory.previewAt || record.saved_at;
-    } catch { startupMemory.responses.delete(path); }
+    } catch (error) {
+      console.warn("Display cache render failed", path, error?.message);
+      startupMemory.responses.delete(path);
+    }
   };
   if (typeof registerInstrumentEarnings === "function") restore("/api/research/earnings/annotations", registerInstrumentEarnings);
   restore("/api/dashboard", renderDashboard);
@@ -227,13 +298,17 @@ async function restoreStartupMemory() {
     const params = new URLSearchParams({hours:socialState.hours, platform:socialState.platform, sample_scope:socialSampleState.scope, sample_query:socialSampleState.query});
     restore(`/api/social?${params}`, data => {socialState.data=data;renderSocial();});
   }
-  if (typeof researchState !== "undefined") {
+  if (typeof researchState !== "undefined" && [...restored.keys()].some(path => path.startsWith("/api/research") || path === "/api/fundamentals")) {
     const paths = [["/api/research/companies", "landscape"], ["/api/fundamentals", "fundamentals"],
       [`/api/research/cards?${new URLSearchParams({search:document.getElementById("strategy-search").value,stance:document.getElementById("strategy-stance").value,offset:researchState.cardOffset})}`, "cards"],
       [`/api/research?${researchFilters()}&offset=${researchState.offset}`, "data"],
       [`/api/research/inputs?kind=${document.getElementById("research-kind").value}&offset=${researchState.inputOffset}`, "inputs"]];
     paths.forEach(([path, field]) => restore(path, data => {researchState[field]=data;}));
     restore("/api/research/inputs?kind=etf_holdings", data => {researchState.etf=data.items.find(item => item.identity === "IGV-XSW-WCLD-BUG") || null;});
+    for(const symbol of researchState.etfSymbols || [])restore(`/api/research/etf?symbol=${encodeURIComponent(symbol)}`,data=>{
+      researchState.etfRemote ||= {};researchState.etfRemote[symbol]=data;
+      if(data.fund){researchState.etf ||= {payload:{funds:{}}};const old=researchState.etf.payload.funds[symbol];if(!old || data.fund.as_of>=old.as_of)researchState.etf.payload.funds[symbol]=data.fund;}
+    });
     if (typeof earningsState !== "undefined") restore(`/api/research/earnings?${earningsParams()}`, data => {earningsState.data=data;});
     try {
       renderResearch();
@@ -246,6 +321,20 @@ async function restoreStartupMemory() {
     if (startupMemory.previewAt) document.getElementById("research-runtime").textContent += " · 上次快照";
   }
   if (startupMemory.previewAt) renderConnection();
+}
+
+async function restoreStartupMemory() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(STARTUP_PREFS_KEY)); } catch {}
+  applyStartupPreferences(saved);
+  const savedView = saved?.view === "research" && saved.research?.tab === "backtest" ? "backtest" : saved?.view;
+  if (saved?.version === 1 && [...document.querySelectorAll(".view")].some(node => node.dataset.view === savedView)) setView(savedView, {refresh:false});
+  const generation = typeof apiReadGeneration === "undefined" ? 0 : apiReadGeneration;
+  const pending = startupRead();
+  const bundle = await Promise.race([pending, new Promise(resolve => window.setTimeout(() => resolve(null), 500))]);
+  await restoreStartupBundle(bundle, saved, generation);
+  // Slow disks must not delay network refresh or silently lose the last usable display.
+  if (!bundle) pending.then(value => restoreStartupBundle(value, null, generation)).catch(() => {});
   document.addEventListener("input", saveStartupPreferences);
   document.addEventListener("change", saveStartupPreferences);
   document.addEventListener("click", () => window.setTimeout(saveStartupPreferences, 0));

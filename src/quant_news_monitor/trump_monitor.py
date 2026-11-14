@@ -275,7 +275,7 @@ class TrumpMonitor:
         self.ledger = ledger
         settings = ConfigStore(config_path).read() if Path(config_path).exists() else {}
         self.public_enabled = bool(settings.get("trump_public_enabled", True)) if public_enabled is None else public_enabled
-        self.public_interval_seconds = max(300, int(settings.get("trump_public_interval_seconds", 300)))
+        self.public_interval_seconds = max(60, int(settings.get("trump_public_interval_seconds", 60)))
         self._public_sources: dict[str, dict[str, Any]] = {}
         self.poll_interval_seconds = max(15, poll_interval_seconds)
         self.timeout_seconds = timeout_seconds
@@ -314,6 +314,10 @@ class TrumpMonitor:
                 post = json.loads(row["payload"])
                 self._posts[post["id"]] = {**post, "input_version_id": row["id"], "collected_at": row["observed_at"], "cached": True}
             self._public_sources = {state["feed_url"]: state for row in schedules if (state := json.loads(row["payload"]))}
+            # Apply the new cadence to healthy cached schedules, never shorten error backoff.
+            for state in self._public_sources.values():
+                if not state.get("error") and not state.get("failures") and state.get("last_checked_at"):
+                    state["next_check_at"] = iso_utc(parse_datetime(state["last_checked_at"]) + timedelta(seconds=self.public_interval_seconds))
 
     def start(self) -> None:
         with self._lock:
@@ -613,6 +617,7 @@ def build_trump_factor(
     aliases: tuple[str, ...] | list[str] = (),
     sector: str = "",
     now: datetime | None = None,
+    include_evidence: bool = True,
 ) -> dict[str, Any]:
     now = now or utc_now()
     groups = _target_groups(market, symbol, name, aliases, sector)
@@ -664,11 +669,13 @@ def build_trump_factor(
         engagement = sum(int(metrics.get(key) or 0) for key in metrics)
         engagement_weight = 1.0 + min(0.20, math.log10(engagement + 1.0) / 30.0)
         confidence = float(analysis.get("confidence") or 0.45)
-        weight = recency * (0.45 + 0.55 * relevance) * confidence * engagement_weight
+        base_weight = (0.45 + 0.55 * relevance) * confidence * engagement_weight
+        weight = recency * base_weight
         contributions.append(
             {
                 "score": effect,
                 "weight": weight,
+                "base_weight": base_weight,
                 "relevance": relevance,
                 "confidence": confidence,
                 "themes": [theme for theme, _, _ in effects if theme != "direct"],
@@ -682,12 +689,14 @@ def build_trump_factor(
         return _empty_factor()
 
     denominator = sum(item["weight"] for item in contributions)
-    score = _clamp(
+    direction_score = _clamp(
         sum(item["score"] * item["weight"] for item in contributions)
         / max(0.0001, denominator),
         -1.0,
         1.0,
     )
+    freshness_weight = denominator / max(0.0001, sum(item["base_weight"] for item in contributions))
+    score = direction_score * freshness_weight
     lead = max(contributions, key=lambda item: item["significance"])
     themes = list(
         dict.fromkeys(
@@ -706,6 +715,8 @@ def build_trump_factor(
     lead_post = lead["post"]
     return {
         "score": round(score, 4),
+        "direction_score": round(direction_score, 4),
+        "freshness_weight": round(freshness_weight, 4),
         "direction": direction,
         "relevance": round(relevance, 4),
         "confidence": round(_clamp(confidence, 0.0, 1.0), 4),
@@ -718,7 +729,7 @@ def build_trump_factor(
         "evidence": [{"id": item["post"].get("id"), "url": item["post"].get("url"),
                       "published_at": item["post"].get("created_at"), "source_kind": item["post"].get("source_kind", "x_post"),
                       "facts": copy.deepcopy(item["post"].get("facts") or {"text": item["post"].get("text")}),
-                      "inference": copy.deepcopy(item["post"].get("analysis"))} for item in contributions],
+                      "inference": copy.deepcopy(item["post"].get("analysis"))} for item in contributions] if include_evidence else [],
         "latest_post_id": str(lead_post.get("id", "")),
         "latest_post_url": str(lead_post.get("url", "")),
         "latest_post_at": str(lead_post.get("created_at", "")),

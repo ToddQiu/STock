@@ -1,61 +1,29 @@
 # STock
 
-## Full application hosting
+股票与 ETF 持仓管理、市场监测、事件分析和研究报告工作台，提供本地桌面端及托管部署方式。
 
-The full Python web application is in `src/quant_news_monitor/`.
-The invite-only deployment package in [deploy/README.md](deploy/README.md) retains
-the existing UI, collectors, portfolio, charts, news, sentiment and research APIs.
-It uses an isolated empty workspace, access-key authentication, persistent SQLite
-and an HTTPS reverse proxy. It is a shared invited workspace, not a multi-user SaaS.
+## 此版本的数据
 
-**The full backend is not deployed yet.** The link below is still only the older
-static research edition. A persistent server and an actual HTTPS acceptance test
-are required; adding Docker files to GitHub does not deploy a server.
-See [verification status](deploy/VERIFICATION.md).
+这是清空持仓的源码发布版：不包含任何个人持仓、组合账户、本金、库存现金、应收应付、成交记录、数据库、API 密钥、导出报告或本机缓存。默认配置持仓为空、本金为零，监测列表为空。测试中的数字仅为测试夹具。
 
-## GitHub Pages edition
+## Windows 本地启动
 
-This directory is a standalone, static research reader for GitHub Pages.
-It is not the Python desktop application's backend.
-
-Included: the existing 25-company reference catalog with original review date,
-source links, conditional scenarios, filtering and sorting, and browser-local
-research notes with JSON import/export. No live quotes, background collection,
-portfolio synchronization, login or server-side analysis is provided.
-
-Private notes stay in the visitor's browser. Clearing browser data removes them.
-Never commit note exports, configuration, databases, credentials, logs or backups.
-
-Build a clean publication copy from the project root:
+安装 Python 3.10 或更新版本、Node.js/npm 后，在项目目录执行：
 
 ```powershell
-python scripts/build_github_pages.py --output output/github-pages-release
-node --test tests/test_pages_core.mjs
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+Copy-Item config.example.json config.json
+npm --prefix desktop ci
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start_desktop_app.ps1
 ```
 
-Live site: https://toddqiu.github.io/STock/
+已有本地配置时不要覆盖 `config.json`。运行数据保存在本地 `data/`，两者均已加入 Git 忽略规则。AI 分析所需凭据请在本地设置，不要提交到仓库。
 
-The production site is published from the root of the `gh-pages` branch.
-The `main` branch keeps the application source and generated `docs/` files.
-To update the live site, test the generated files and publish the contents of
-`docs/` to the root of `gh-pages`, retaining `.nojekyll`. Updating `main` alone
-does not update the website. Do not publish desktop configuration or databases.
+## 其他运行方式
 
-For a separate deployment using `main/docs`, choose Settings > Pages >
-Deploy from a branch > main > /docs > Save. Do not switch the existing site's
-source unless intentionally changing the deployment method.
+- [托管部署说明](deploy/README.md)
+- [网页研究工具说明](pages/README.md)
+- 桌面打包脚本：`scripts/build_desktop_package.py`；本仓库不包含安装包或第三方运行时。
 
-To test locally, serve the generated directory with any static HTTP server,
-then open `/docs/`. Relative asset paths also work under `/STock/` on Pages.
-
-The existing Lucide icon sprite retains its bundled copyright and license.
-No new license is granted for the rest of the project by this publication.
-
-## Desktop source
-
-The `src/` directory preserves the Python application source. It does not run
-on GitHub Pages. For local use, install Python 3.10 or newer, install the
-project (`pip install -e .`), copy `config.example.json` to `config.json`,
-then run `python app.py`. The example configuration contains no holdings.
-Optional local translation models and Windows desktop binaries are not included.
-Never expose the desktop API directly to the public internet.
+`PUBLICATION-MANIFEST.json` 记录本次发布文件的 SHA-256，可用于校验源码副本。

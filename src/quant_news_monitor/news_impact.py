@@ -1,7 +1,39 @@
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
+
+
+def price_target_revision(text: str) -> dict | None:
+    """Parse an explicit old/new target pair, not the rating or the stock price."""
+    marker = re.search(r"\bprice\s+target\b|目标价|目標價", text, re.I)
+    if not marker:
+        return None
+    tail = text[marker.end():]
+    if re.search(r"\bprice\s+target\b|目标价|目標價", tail, re.I):
+        return None
+    def amount(name):
+        return rf"(?P<{name}_unit>US\$|HK\$|USD|HKD|CNY|EUR|\$|€|£)?\s*(?P<{name}>\d+(?:,\d{{3}})*(?:\.\d+)?)"
+    patterns = (
+        rf"(?:to|至|到)\s*{amount('new')}\s*(?:from|由)\s*{amount('old')}",
+        rf"(?:from|由|从|從)\s*{amount('old')}\s*(?:元|美元|港元)?\s*(?:上调|下调|上調|下調|调整|調整)?\s*(?:to|至|到)\s*{amount('new')}",
+    )
+    match = next((m for pattern in patterns if (m := re.search(pattern, tail[:140], re.I))), None)
+    if not match:
+        return None
+    if match.start() > 40 or re.search(r"\d", tail[:match.start()]):
+        return None
+    old, new = (float(match.group(key).replace(',', '')) for key in ('old', 'new'))
+    old_unit, new_unit = (str(match.group(key) or '').upper() for key in ('old_unit', 'new_unit'))
+    if old_unit and new_unit and old_unit != new_unit:
+        return None
+    if old <= 0 or new <= 0 or not all(math.isfinite(value) for value in (old, new)):
+        return None
+    change = (new / old - 1) * 100
+    if not math.isfinite(change):
+        return None
+    return {"old": old, "new": new, "unit": new_unit or old_unit, "change_pct": change}
 
 
 IMPACT_AREAS = {

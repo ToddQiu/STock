@@ -45,6 +45,7 @@ FUND_PERIODS = {
     "daily": {"1m", "3m", "6m", "1y"},
     "weekly": {"6m", "1y"},
 }
+INTRADAY_INTERVALS = {"1m": 1, "5m": 5, "10m": 10, "15m": 15, "30m": 30, "60m": 60}
 _STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.^=_-]{1,24}$")
 ASSET_CHARTS = {
     "GOLD": ("GC=F", "COMEX 黄金期货参考；不是 XAU/USD 现货，未校准或拼接现货报价。"),
@@ -52,6 +53,67 @@ ASSET_CHARTS = {
     "OIL": ("CL=F", "WTI 连续期货参考；不是现货原油，也不保证对应某个交割月份。"),
     "US5Y": ("^FVX", "Cboe 五年期美债收益率指标，单位 %；不是债券价格或 DGS5 日频序列。"),
 }
+
+
+def normalize_chart_interval(mode: str, interval: str | None) -> str | None:
+    if interval is None:
+        return "1m" if mode == "intraday" else None
+    if mode != "intraday":
+        raise ValueError("分钟周期仅适用于分时 K 线")
+    if interval in {"1s", "30s"}:
+        raise ValueError("当前未接入秒级行情源，暂不提供1秒或30秒K线")
+    if interval not in INTRADAY_INTERVALS:
+        raise ValueError("K线周期仅支持1、5、10、15、30或60分钟")
+    return interval
+
+
+def resample_intraday_chart(data: dict[str, Any], market: str, interval: str | None) -> dict[str, Any]:
+    """Aggregate the cached source minutes, keeping gaps and session boundaries."""
+    if interval is None or interval == "1m":
+        return data
+    if data.get("mode") != "intraday" or data.get("interval") != "1m":
+        raise ValueError("只能从真实1分钟K线合并分钟周期")
+    if data.get("kind") == "price_line":
+        raise ValueError("CFD来源仅提供分时采样，没有可合并的分钟开高低收数据")
+    minutes = INTRADAY_INTERVALS[interval]
+    zone = ZoneInfo(data.get("exchange_timezone") or {
+        "CN": "Asia/Shanghai", "HK": "Asia/Hong_Kong", "KR": "Asia/Seoul",
+        "US": "America/New_York",
+    }.get(market, "UTC"))
+    buckets: dict[tuple, list[dict]] = {}
+    for row in sorted(data.get("candles") or [], key=lambda row: row["timestamp"]):
+        local = datetime.fromtimestamp(row["timestamp"], zone)
+        minute = local.hour * 60 + local.minute
+        # Align to the exchange opening; never merge lunch, pre/post or dates.
+        if market in {"CN", "HK"}:
+            opening = 780 if minute >= 780 else 570 if minute >= 570 else 540
+        elif market == "US" and data.get("instrument_type") != "FUTURE":
+            opening = 960 if minute >= 960 else 570 if minute >= 570 else 240 if minute >= 240 else 0
+        else:
+            opening = 540 if market == "KR" else 0
+        start = opening + (minute - opening) // minutes * minutes
+        stamp = int(local.replace(hour=start // 60, minute=start % 60, second=0, microsecond=0).timestamp())
+        buckets.setdefault((local.date(), row.get("session"), stamp), []).append(row)
+    candles = []
+    for (_, _, stamp), rows in buckets.items():
+        volumes = [row.get("volume") for row in rows]
+        candles.append({
+            **rows[0], "timestamp": stamp,
+            "datetime": datetime.fromtimestamp(stamp, timezone.utc).isoformat(),
+            "open": rows[0]["open"], "close": rows[-1]["close"],
+            "high": max(row["high"] for row in rows), "low": min(row["low"] for row in rows),
+            "volume": sum(volumes) if all(value is not None for value in volumes) else None,
+            "source_points": len(rows), "partial": len(rows) < minutes,
+        })
+    result = {**data, "interval": interval, "source_interval": "1m", "candles": candles,
+              "stats": {**data.get("stats", {}), "points": len(candles)},
+              "technical": build_technical_analysis(candles, mode="intraday", is_fund=False)}
+    result["note"] = (
+        f"每根K线为{minutes}分钟，由实际1分钟K线合并；按交易时段起点对齐，跨日和午休分开。"
+        "缺失分钟不补造，末根或缺口所在K线可能不完整；图上时间为周期起点。原始数据说明："
+        + data.get("note", "")
+    )
+    return result
 
 
 def chart_session_status(market: str, symbol: str, data: dict, *, now: datetime | None = None) -> str:
@@ -64,7 +126,7 @@ def chart_session_status(market: str, symbol: str, data: dict, *, now: datetime 
         return "unknown"
     local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(zones[market]))
     minute = local.hour * 60 + local.minute
-    if market == "ASSET" and symbol in {"GOLD", "OIL"}:
+    if (market == "ASSET" and symbol in {"GOLD", "OIL"}) or (market == "US" and symbol in {"NQ=F", "NQ.CFD"}):
         closed = (local.weekday() == 5 or local.weekday() == 4 and minute >= 17 * 60
                   or local.weekday() == 6 and minute < 18 * 60 or local.weekday() < 4 and 17 * 60 <= minute < 18 * 60)
         return "closed" if closed else "unknown"
@@ -82,6 +144,23 @@ def fetch_portfolio_chart(
     market: str, symbol: str, period: str | None = None, *, mode: str = "daily",
     timeout_seconds: int = 12,
 ) -> dict[str, Any]:
+    if str(market).strip().upper() == "US" and str(symbol).strip().upper() == "NQ.CFD":
+        if mode != "intraday" or str(period or "1d").strip().lower() != "1d":
+            raise ValueError("纳指CFD参考当前仅提供最近交易时段分时采样，未接入同口径日K、周K或5日图")
+        return _fetch_sina_nq_cfd_line(min(timeout_seconds, 6))
+    if str(market).strip().upper() == "KR" and str(symbol).strip().upper() == "^KS11" and mode == "intraday" and (period or "1d") == "1d":
+        return _fetch_naver_chart("KR", "^KS11", "1d", mode, min(timeout_seconds, 6))
+    if str(market).strip().upper() == "CN" and str(symbol).strip().upper() == "000688.SS" and mode == "intraday":
+        normalized_period = str(period or "1d").strip().lower()
+        if normalized_period not in CHART_MODES["intraday"]:
+            raise ValueError("该图表视图不支持所选周期")
+        # Yahoo's STAR50 minute feed trails the exchange by about 15 minutes.
+        # Use the existing code-validated mainland feed, including real OHLC.
+        result = _fetch_backup_chart("CN", "000688.SS", normalized_period, mode, min(timeout_seconds, 6))
+        result.update(symbol="000688.SS", instrument_type="INDEX", unit="points", currency=None,
+                      refresh_seconds=20)
+        result["stats"]["baseline_label"] = "较区间起点"
+        return result
     try:
         primary_timeout = timeout_seconds if str(market).strip().upper() == "FUND" else min(timeout_seconds, 3 if str(symbol).upper() == "BTC" else 6)
         return _fetch_primary_chart(market, symbol, period, mode=mode, timeout_seconds=primary_timeout)
@@ -220,7 +299,7 @@ def _fetch_backup_chart(market: str, symbol: str, period: str, mode: str, timeou
         if not code.isdigit():
             raise RuntimeError("备用源暂不支持此证券代码")
         if market == "CN":
-            secid, currency, exchange_zone = ("1." if code[0] in "569" else "0.") + code, "CNY", "Asia/Shanghai"
+            secid, currency, exchange_zone = ("1." if symbol.endswith(".SS") else "0.") + code, "CNY", "Asia/Shanghai"
         elif market == "HK":
             secid, currency, exchange_zone = "116." + code.zfill(5), "HKD", "Asia/Hong_Kong"
         else:
@@ -272,6 +351,51 @@ def _fetch_backup_chart(market: str, symbol: str, period: str, mode: str, timeou
                          "https://quote.eastmoney.com/unify/r/" + secid, description)
 
 
+def _fetch_sina_nq_cfd_line(timeout: int) -> dict[str, Any]:
+    # This is the HF minute-line endpoint used by Sina's official NQ CFD page/SDK.
+    # It contains price samples, not minute OHLC. Do not manufacture candles.
+    payload = _request_json(
+        "https://stock2.finance.sina.com.cn/futures/api/openapi.php/GlobalFuturesService.getGlobalFuturesMinLine?symbol=NQ",
+        timeout_seconds=timeout)
+    result = payload.get("result") or {}
+    rows = (result.get("data") or {}).get("minLine_1d")
+    if (result.get("status") or {}).get("code") != 0 or not isinstance(rows, list) or not rows:
+        raise ChartDataUnavailable("新浪暂未返回纳指CFD分时采样")
+    header = rows[0]
+    if not isinstance(header, list) or len(header) != 10 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(header[0])):
+        raise ChartDataUnavailable("纳指CFD分时采样格式无效")
+    previous = _finite_number(header[1])
+    previous = previous if previous and previous > 0 else None
+    samples = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != (10 if index == 0 else 6):
+            continue
+        value = _finite_number(row[5] if index == 0 else row[1])
+        try:
+            moment = datetime.strptime(str(row[-1]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        except ValueError:
+            continue
+        stamp = int(moment.timestamp())
+        if value is None or value <= 0 or stamp <= 0 or stamp > time.time() + 2:
+            continue
+        samples[stamp] = {"timestamp": stamp, "datetime": moment.astimezone(timezone.utc).isoformat(),
+                          "date": moment.date().isoformat(), "close": value, "session": "reference"}
+    points = sorted(samples.values(), key=lambda row: row["timestamp"])
+    if not points:
+        raise ChartDataUnavailable("纳指CFD没有有效时间戳的分时采样")
+    latest = points[-1]["close"]
+    baseline = previous or points[0]["close"]
+    return {"kind": "price_line", "mode": "intraday", "symbol": "NQ.CFD", "period": "1d", "interval": "1m",
+            "currency": None, "unit": "points", "instrument_type": "CFD", "exchange_timezone": "Asia/Shanghai",
+            "extended_hours": False, "candles": points, "session_date": points[-1]["date"], "refresh_seconds": 20,
+            "stats": {"latest": latest, "previous_close": previous, "change_pct": (latest / baseline - 1) * 100,
+                      "baseline_label": "较CFD来源前收" if previous else "较区间起点", "points": len(points),
+                      "latest_timestamp": points[-1]["timestamp"], "high": max(p["close"] for p in points),
+                      "low": min(p["close"] for p in points)},
+            "technical": {}, "source": "新浪财经", "source_url": "https://finance.sina.com.cn/futures/quotes/NQ.shtml",
+            "note": "纳指CFD盘外参考，不是CME交易所期货。折线为来源提供的每分钟价格采样，非分钟K线；未补造开高低收或成交量。最高最低仅为采样点极值。报价与分时采样更新频率不同，以各自原始时间为准。"}
+
+
 def _us_listing(symbol: str, timeout: int) -> dict:
     params = urllib.parse.urlencode({"input": symbol, "type": 14, "count": 20})
     listing = _request_json("https://searchapi.eastmoney.com/api/suggest/get?" + params, timeout_seconds=timeout)
@@ -287,7 +411,7 @@ def _fetch_sina_cn_minutes(symbol: str, period: str, timeout: int) -> dict:
     code = symbol.split(".")[0]
     if not re.fullmatch(r"[0569]\d{5}|[123]\d{5}", code):
         raise ChartDataUnavailable("该 A 股代码尚无独立分钟备用源", retry_after_seconds=60)
-    source_code = ("sh" if code[0] in "569" else "sz") + code
+    source_code = ("sh" if symbol.endswith(".SS") else "sz") + code
     params = urllib.parse.urlencode({"symbol": source_code, "scale": 1, "ma": "no", "datalen": 300})
     payload = _request_json("https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?" + params,
                             timeout_seconds=timeout)
@@ -338,8 +462,9 @@ def _fetch_sina_us_minutes(symbol: str, period: str, timeout: int) -> dict:
 
 
 def _fetch_naver_chart(market: str, symbol: str, period: str, mode: str, timeout: int) -> dict:
+    kospi = market == "KR" and symbol == "^KS11"
     if market == "KR":
-        code, section, currency, zone = symbol.split(".")[0], "domestic", "KRW", "Asia/Seoul"
+        code, section, currency, zone = "KOSPI" if kospi else symbol.split(".")[0], "domestic", "KRW", "Asia/Seoul"
     else:
         exchange = _us_listing(symbol, timeout).get("JYS")
         suffix = {"NASDAQ": ".O", "NYSE": ".N", "AMEX": ".K"}.get(exchange)
@@ -348,7 +473,10 @@ def _fetch_naver_chart(market: str, symbol: str, period: str, mode: str, timeout
         code, section, currency, zone = symbol + suffix, "foreign", "USD", "America/New_York"
     params = {"periodType": "day"} if mode == "intraday" else {
         "periodType": "month", "range": {"1m": 1, "3m": 3, "6m": 6, "1y": 12}[period]}
-    payload = _request_json(f"https://api.stock.naver.com/chart/{section}/item/{code}?" + urllib.parse.urlencode(params),
+    if kospi and mode == "intraday" and period != "1d":
+        raise ChartDataUnavailable("Naver 指数分时仅提供最近交易日，未用单日代替多日行情")
+    path_kind = "index" if kospi else "item"
+    payload = _request_json(f"https://api.stock.naver.com/chart/{section}/{path_kind}/{code}?" + urllib.parse.urlencode(params),
                             timeout_seconds=timeout)
     if payload.get("code") != code or payload.get("periodType") != params["periodType"]:
         raise RuntimeError("Naver 行情主体或周期不符")
@@ -364,7 +492,8 @@ def _fetch_naver_chart(market: str, symbol: str, period: str, mode: str, timeout
         volume = _finite_number(row.get("accumulatedTradingVolume"))
         minute_volume = volume - previous_volume if volume is not None and previous_volume is not None and volume >= previous_volume else None
         previous_volume = volume
-        if mode == "intraday" and not "09:00" <= moment.strftime("%H:%M") <= "15:30":
+        opening, closing = ("09:30", "16:00") if market == "US" else ("09:00", "15:30")
+        if mode == "intraday" and not opening <= moment.strftime("%H:%M") <= closing:
             continue
         candle = _public_candle(moment.timestamp(), [row.get("openPrice"), row.get("highPrice"), row.get("lowPrice"),
             row.get("currentPrice" if mode == "intraday" else "closePrice"), minute_volume if mode == "intraday" else volume], zone)
@@ -381,9 +510,18 @@ def _fetch_naver_chart(market: str, symbol: str, period: str, mode: str, timeout
                 "low": min(prior["low"], row["low"]) if prior else row["low"],
                 "volume": prior["volume"] + row["volume"] if prior and prior["volume"] is not None and row["volume"] is not None else None if prior else row["volume"]}
         candles = list(weeks.values())
-    return _public_chart(candles, symbol, period, mode, currency, zone, "Naver Finance · 公开参考",
+    result = _public_chart(candles, symbol, period, mode, currency, zone, "Naver Finance · 公开参考",
         f"https://m.stock.naver.com/{section}/stock/{code}/total",
         "Naver 公开参考 K 线；非实时授权。" + ("周 K 由真实日 K 聚合，首尾周可能未完整。" if mode == "weekly" else ""))
+    if kospi:
+        result.update(source="Naver Finance", source_url="https://m.stock.naver.com/domestic/index/KOSPI/total",
+                      session_date=result["candles"][-1]["date"], refresh_seconds=10 if mode == "intraday" else 60)
+        result["instrument_note"] = "韩国综合指数点位；Naver 原始 OHLC。"
+        result["note"] = "Naver 原始 K 线；时间按首尔交易日，分时每 10 秒检查更新；当前分钟尚未收完。"
+        previous = _finite_number(payload.get("lastClosePrice"))
+        if mode == "intraday" and previous and previous > 0:
+            result["stats"].update(previous_close=previous, change_pct=(result["stats"]["latest"] / previous - 1) * 100)
+    return result
 
 
 def _public_candle(stamp: Any, values: list, exchange_zone: str) -> dict[str, Any] | None:
@@ -466,7 +604,12 @@ def fetch_stock_candles(
     timeout_seconds: int = 12,
     extended_hours: bool = True,
 ) -> dict[str, Any]:
+    from .index_monitor import INDEX_CATALOG
+
     normalized_symbol = str(symbol or "").strip().upper()
+    index_definition = next((item for item in INDEX_CATALOG if item["symbol"] == normalized_symbol), None)
+    is_index = index_definition is not None
+    extended_hours = extended_hours and not is_index
     normalized_mode = _normalize_mode(mode)
     normalized_period = str(
         period or DEFAULT_PERIODS[normalized_mode]
@@ -480,6 +623,10 @@ def fetch_stock_candles(
     encoded_symbol = urllib.parse.quote(normalized_symbol, safe="")
     used_history_window = False
     ranges = (range_name, "5d") if normalized_mode == "intraday" and normalized_period == "1d" else (range_name,)
+    latest_us_session = is_index and index_definition["market"] == "US" and normalized_mode == "intraday" and normalized_period == "1d"
+    if latest_us_session:
+        # US closures can return timestamps with null prices for 1d. Select the last real session from 5d.
+        ranges, used_history_window = ("5d",), True
     for requested_range in ranges:
         params = urllib.parse.urlencode({
             "interval": interval,
@@ -496,8 +643,13 @@ def fetch_stock_candles(
         if not isinstance(result, dict):
             raise ChartDataUnavailable(f"{normalized_symbol} 暂无历史行情")
         meta = result.get("meta") or {}
+        if is_index and (meta.get("symbol") != normalized_symbol or meta.get("instrumentType") != "INDEX"):
+            raise RuntimeError("指数行情主体不符，未使用股票或 ETF 代替")
         if meta.get("symbol") and str(meta["symbol"]).upper() != normalized_symbol:
             raise RuntimeError("行情主体与请求代码不符")
+        reference_type = {"SOXX": "ETF", "NQ=F": "FUTURE"}.get(normalized_symbol)
+        if reference_type and (meta.get("symbol") != normalized_symbol or meta.get("instrumentType") != reference_type):
+            raise RuntimeError("盘外参考行情主体或品种类型不符")
         if meta.get("dataGranularity") and meta["dataGranularity"] != interval:
             raise RuntimeError("来源返回的 K 线周期与请求不符")
         if (result.get("timestamp") or requested_range != "1d"
@@ -505,7 +657,9 @@ def fetch_stock_candles(
             break
         # An empty one-day window can occur during a closure. A rate/access error never reaches this retry.
         used_history_window = True
-    is_us_extended = extended_hours and normalized_mode == "intraday" and meta.get("exchangeTimezoneName") == "America/New_York"
+    is_us_extended = (extended_hours and normalized_mode == "intraday"
+                      and meta.get("instrumentType") in {"EQUITY", "ETF"}
+                      and meta.get("exchangeTimezoneName") == "America/New_York")
 
     timestamps = result.get("timestamp") or []
     quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
@@ -513,6 +667,7 @@ def fetch_stock_candles(
     highs = quote.get("high") or []
     lows = quote.get("low") or []
     closes = quote.get("close") or []
+    adjusted = (((result.get("indicators") or {}).get("adjclose") or [{}])[0]).get("adjclose") or []
     volumes = quote.get("volume") or []
     candles: list[dict[str, Any]] = []
     for index, timestamp in enumerate(timestamps):
@@ -537,13 +692,14 @@ def fetch_stock_candles(
             {
                 "timestamp": int(stamp),
                 "datetime": moment.isoformat(),
-                "date": moment.astimezone(ZoneInfo("America/New_York")).date().isoformat() if is_us_extended else moment.date().isoformat(),
+                "date": moment.astimezone(ZoneInfo("America/New_York")).date().isoformat() if is_us_extended or latest_us_session else moment.date().isoformat(),
                 "session": chart_session_at(meta, int(stamp)) if is_us_extended else "regular",
                 "open": open_value,
                 "high": high_value,
                 "low": low_value,
                 "close": close_value,
-                "volume": max(0.0, volume or 0.0),
+                "adjusted_close": _finite_number(adjusted[index]) if normalized_mode == "daily" and index < len(adjusted) else None,
+                "volume": volume if volume is not None and volume >= 0 else None,
             }
         )
     if not candles:
@@ -562,15 +718,22 @@ def fetch_stock_candles(
                 "open": previous["open"] if previous else candle["open"],
                 "high": max(previous["high"], candle["high"]) if previous else candle["high"],
                 "low": min(previous["low"], candle["low"]) if previous else candle["low"],
-                "volume": max(previous["volume"], candle["volume"]) if previous else candle["volume"],
+                "volume": max((v for v in (previous["volume"] if previous else None, candle["volume"]) if v is not None), default=None),
             }
         candles = list(minutes.values())
 
+    history_previous_close = None
     if used_history_window:
         if meta.get("instrumentType") == "FUTURE":
             candles = [row for row in candles if row["timestamp"] > candles[-1]["timestamp"] - 86400]
         else:
             last_day = candles[-1]["date"]
+            if latest_us_session:
+                prior = [row for row in candles if row["date"] < last_day]
+                history_previous_close = prior[-1]["close"] if prior else None
+                quote_stamp, official_close = _finite_number(meta.get("regularMarketTime")), _finite_number(meta.get("previousClose"))
+                if quote_stamp and official_close and official_close > 0 and datetime.fromtimestamp(quote_stamp, ZoneInfo("America/New_York")).date().isoformat() == last_day:
+                    history_previous_close = official_close
             candles = [row for row in candles if row["date"] == last_day]
 
     closes_in_period = [item["close"] for item in candles]
@@ -578,11 +741,17 @@ def fetch_stock_candles(
     lows_in_period = [item["low"] for item in candles]
     meta = result.get("meta") or {}
     previous_close = _finite_number(
-        meta.get("chartPreviousClose") or meta.get("previousClose")
-    ) if not used_history_window else None
+        (meta.get("previousClose") or meta.get("chartPreviousClose")) if normalized_symbol == "NQ=F"
+        else (meta.get("chartPreviousClose") or meta.get("previousClose"))
+    ) if not used_history_window else history_previous_close
     session_fields = us_quote_fields(result) if is_us_extended and normalized_period == "1d" and not used_history_window else {}
     if session_fields.get("previous_close"):
         previous_close = session_fields["previous_close"]
+    baseline_label = "较来源前收" if previous_close else "较区间起点"
+    if (normalized_symbol == "SOXX" and session_fields.get("quote_session") in {"pre", "post"}
+            and session_fields.get("extended_change_pct") is not None and session_fields.get("regular_price")):
+        previous_close = session_fields["regular_price"]
+        baseline_label = "较常规收盘"
     baseline = (
         previous_close
         if normalized_mode == "intraday"
@@ -590,10 +759,19 @@ def fetch_stock_candles(
         and previous_close
         else closes_in_period[0]
     )
+    if normalized_mode != "intraday" or normalized_period != "1d":
+        baseline_label = "较区间起点"
     latest_close = closes_in_period[-1]
     change_pct = (
         (latest_close / baseline - 1.0) * 100.0 if baseline and baseline > 0 else 0.0
     )
+    # Daily candle timestamps denote the session's opening, not the latest trade.
+    # Consumers such as close reviews need the provider's quote clock separately.
+    quote_stamp = _finite_number(meta.get("regularMarketTime"))
+    try:
+        source_quote_at = datetime.fromtimestamp(quote_stamp, timezone.utc).isoformat() if quote_stamp is not None else None
+    except (OverflowError, OSError, ValueError):
+        source_quote_at = None
     return {
         "kind": "intraday" if normalized_mode == "intraday" else "candlestick",
         "mode": normalized_mode,
@@ -601,9 +779,12 @@ def fetch_stock_candles(
         "period": normalized_period,
         "interval": interval,
         "currency": str(meta.get("currency") or ""),
+        "instrument_type": str(meta.get("instrumentType") or ""),
+        "unit": "points" if is_index or normalized_symbol == "NQ=F" else str(meta.get("currency") or ""),
         "exchange_timezone": str(meta.get("exchangeTimezoneName") or ""),
         "extended_hours": is_us_extended,
         "latest_session": candles[-1].get("session"),
+        "session_date": candles[-1]["date"],
         "candles": candles,
         "stats": {
             "latest": latest_close,
@@ -612,6 +793,7 @@ def fetch_stock_candles(
             "low": min(lows_in_period),
             "points": len(candles),
             "previous_close": previous_close,
+            "baseline_label": baseline_label,
             "latest_timestamp": candles[-1]["timestamp"],
         },
         "technical": build_technical_analysis(
@@ -620,11 +802,13 @@ def fetch_stock_candles(
             is_fund=False,
         ),
         "source": YAHOO_SOURCE_NAME,
+        "source_quote_at": source_quote_at,
         "source_url": f"https://finance.yahoo.com/quote/{encoded_symbol}/chart/",
-        "note": ("一日区间为空，按相同一分钟粒度回溯历史，仅展示最近有效交易日或期货最近 24 小时片段；涨跌幅相对本段首根收盘价，不是今日涨跌幅。" if used_history_window else "") + (
+        "note": ("纳指100期货参考，报价源约延迟10分钟；不等同于纳斯达克综合指数。" if normalized_symbol == "NQ=F" else "") + ("一日区间为空，按相同一分钟粒度回溯历史，仅展示最近有效交易日或期货最近 24 小时片段；涨跌幅相对本段首根收盘价，不是今日涨跌幅。" if used_history_window else "") + (
             "每根 K 线为 1 分钟，含美股盘前、常规及盘后；公开参考行情，不保证实时。窗口打开时每 20 秒检查更新。"
             if is_us_extended else "每根 K 线为 1 分钟，缺失分钟不补造；公开参考行情，不保证实时。窗口打开时每 20 秒检查更新。"
             if normalized_mode == "intraday"
+            else "指数显示开、高、低、收点位；成交量按来源披露。" if is_index
             else "股票显示真实开、高、低、收与成交量；技术提示只基于量价指标。"
         ),
     }
@@ -651,8 +835,10 @@ def build_technical_analysis(
     ma10 = ma10_series[-1]
     ma20 = ma20_series[-1]
     ma60 = ma60_series[-1]
-    rsi14 = _rsi(closes, 14)
-    macd, macd_signal, macd_histogram = _macd(closes)
+    rsi_series = _rsi_series(closes, 14)
+    rsi14 = rsi_series[-1]
+    macd_series, signal_series, histogram_series = _macd_series(closes)
+    macd, macd_signal, macd_histogram = macd_series[-1], signal_series[-1], histogram_series[-1]
     bollinger = _bollinger(closes, 20)
     volume_ratio = _volume_ratio(volumes)
     vwap_series = _vwap_series(candles) if mode == "intraday" and not is_fund else []
@@ -817,6 +1003,8 @@ def build_technical_analysis(
         ],
         "indicators": indicators,
         "overlays": overlays,
+        "oscillators": {"rsi14": _rounded_series(rsi_series), "dif": _rounded_series(macd_series),
+                        "dea": _rounded_series(signal_series), "histogram": _rounded_series(histogram_series)},
         "levels": {
             "support": _rounded(support),
             "resistance": _rounded(resistance),
@@ -899,8 +1087,13 @@ def _ema_series(values: list[float], period: int) -> list[float]:
 
 
 def _rsi(values: list[float], period: int) -> float | None:
+    return _rsi_series(values, period)[-1] if values else None
+
+
+def _rsi_series(values: list[float], period: int) -> list[float | None]:
+    result = [None] * len(values)
     if len(values) <= period:
-        return None
+        return result
     gains = []
     losses = []
     for previous, current in zip(values, values[1:]):
@@ -909,23 +1102,25 @@ def _rsi(values: list[float], period: int) -> float | None:
         losses.append(max(-change, 0.0))
     average_gain = sum(gains[:period]) / period
     average_loss = sum(losses[:period]) / period
-    for gain, loss in zip(gains[period:], losses[period:]):
+    def value():
+        return (100.0 if average_gain > 0 else 50.0) if average_loss == 0 else 100.0 - 100.0 / (1.0 + average_gain / average_loss)
+    result[period] = value()
+    for index, (gain, loss) in enumerate(zip(gains[period:], losses[period:]), period + 1):
         average_gain = (average_gain * (period - 1) + gain) / period
         average_loss = (average_loss * (period - 1) + loss) / period
-    if average_loss == 0:
-        return 100.0 if average_gain > 0 else 50.0
-    relative_strength = average_gain / average_loss
-    return 100.0 - 100.0 / (1.0 + relative_strength)
+        result[index] = value()
+    return result
 
 
-def _macd(values: list[float]) -> tuple[float | None, float | None, float | None]:
+def _macd_series(values: list[float]) -> tuple[list, list, list]:
     if len(values) < 26:
-        return None, None, None
+        return ([None] * len(values), [None] * len(values), [None] * len(values))
     fast = _ema_series(values, 12)
     slow = _ema_series(values, 26)
     line = [fast_value - slow_value for fast_value, slow_value in zip(fast, slow)]
     signal = _ema_series(line, 9)
-    return line[-1], signal[-1], line[-1] - signal[-1]
+    return tuple([None if i < 25 else value for i, value in enumerate(row)]
+                 for row in (line, signal, [a - b for a, b in zip(line, signal)]))
 
 
 def _bollinger(values: list[float], period: int) -> dict[str, float] | None:
@@ -1043,7 +1238,12 @@ def _request_json(url: str, *, timeout_seconds: int) -> dict[str, Any] | list:
         ("searchapi.eastmoney.com", "/api/suggest/get"),
         ("data-api.binance.vision", "/api/v3/klines"),
         ("quotes.sina.cn", "/cn/api/json_v2.php/CN_MarketDataService.getKLineData"),
+        ("polling.finance.naver.com", "/api/realtime/domestic/index/KOSPI"),
+        ("api.stock.naver.com", "/chart/domestic/index/KOSPI"),
     } or (parts.hostname == "api.stock.naver.com" and re.fullmatch(r"/chart/(?:domestic|foreign)/item/[A-Z0-9.]{1,24}", parts.path))
+    backup = backup or (parts.hostname == "stock2.finance.sina.com.cn"
+                        and parts.path == "/futures/api/openapi.php/GlobalFuturesService.getGlobalFuturesMinLine"
+                        and parts.query == "symbol=NQ")
     if (parts.scheme != "https" or not (coinbase or yahoo or backup or sina_us) or parts.username or parts.port):
         raise ValueError("历史行情请求地址无效")
     provider = "yahoo" if yahoo else parts.hostname

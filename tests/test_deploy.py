@@ -5,10 +5,13 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
+import subprocess
 import tarfile
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("stock_deploy", ROOT / "deploy/manage.py")
@@ -17,6 +20,25 @@ spec.loader.exec_module(deploy)
 
 
 class DeploymentTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows launch entry')
+    def test_offline_launcher_works_without_get_file_hash_and_rejects_tampering(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copyfile(ROOT / 'deploy/Launch-STock.ps1', root / 'Launch-STock.ps1')
+            archive = root / 'STock-release.tar.gz'
+            archive.write_bytes(b'offline checksum fixture')
+            (root / 'STock-release.sha256').write_text(deploy.digest(archive), encoding='ascii')
+            command = [shutil.which('powershell.exe'), '-NoProfile', '-NonInteractive', '-Command',
+                       "function Get-FileHash { throw 'Unavailable in this host' }; "
+                       f"& '{str(root / 'Launch-STock.ps1').replace(chr(39), chr(39)*2)}' -CheckOnly"]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('Offline check only', result.stdout)
+            archive.write_bytes(b'tampered')
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Release checksum failed', result.stderr)
+
     @unittest.skipUnless(os.name == 'posix', 'Linux deployment lock')
     def test_deployment_root_and_concurrent_run_are_protected(self):
         with TemporaryDirectory() as directory:
@@ -147,6 +169,34 @@ class DeploymentTests(unittest.TestCase):
 
     def test_https_redirects_never_forward_credentials(self):
         self.assertIsNone(deploy.NoRedirect().redirect_request(None, None, 302, "", {}, "https://evil.example"))
+
+    def test_site_verification_covers_new_modules_and_requires_protected_resources(self):
+        from types import SimpleNamespace
+        seen = set()
+        broken = set()
+
+        def open_response(request, timeout):
+            path = urlsplit(request.full_url).path
+            authenticated = bool(request.headers.get('Authorization'))
+            seen.add((path, authenticated))
+            status = 200 if authenticated else 401
+            if authenticated and (path in broken or path == '/api/assistant/status'):
+                status = 404 if path in broken else 403
+            body = (b'data-view-target="portfolio" id="research-backtest-panel" id="research-valuation-panel"'
+                    if path == '/' else b'{}')
+            response = io.BytesIO(body)
+            response.status = status
+            return response
+
+        with patch.object(deploy, 'build_opener', return_value=SimpleNamespace(open=open_response)):
+            deploy.verify_site('stock.example.com', 'key')
+            for path in ('/valuation.js', '/backtest.js', '/portfolio_books.js', '/api/portfolios',
+                         '/api/research/valuations', '/api/portfolio/backtests'):
+                self.assertIn((path, True), seen)
+                self.assertIn((path, False), seen)
+            broken.add('/valuation.js')
+            with self.assertRaisesRegex(RuntimeError, '/valuation.js HTTP 404'):
+                deploy.verify_site('stock.example.com', 'key')
 
 
 if __name__ == "__main__":

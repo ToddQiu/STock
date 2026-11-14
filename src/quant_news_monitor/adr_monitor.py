@@ -158,14 +158,21 @@ def _fetch_yahoo_quote(symbol: str, timeout_seconds: int) -> dict[str, Any]:
         f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1m&range=1d&includePrePost=true",
         headers={"User-Agent": "Mozilla/5.0 QuantNewsMonitor/0.1"},
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        payload = response.read(1_000_001)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = response.read(1_000_001)
+    except (OSError, ValueError):
+        request.full_url = request.full_url.replace("query1.finance.yahoo.com", "query2.finance.yahoo.com")
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = response.read(1_000_001)
     if len(payload) > 1_000_000:
         raise ValueError(f"{symbol} 行情响应过大")
     result = (json.loads(payload).get("chart", {}).get("result") or [None])[0]
     if not isinstance(result, dict):
         raise ValueError(f"{symbol} 暂无行情")
     meta = result.get("meta") or {}
+    if str(meta.get("symbol") or "").upper() != symbol.upper():
+        raise ValueError("报价主体与请求代码不一致")
     price = float(meta.get("regularMarketPrice") or 0.0)
     if not math.isfinite(price) or price <= 0:
         raise ValueError(f"{symbol} 暂无有效价格")
@@ -197,8 +204,9 @@ def _fetch_yahoo_quote(symbol: str, timeout_seconds: int) -> dict[str, Any]:
     ]
     return {
         "symbol": symbol,
+        "name": meta.get("longName") or meta.get("shortName"),
         "price": price,
-        "currency": str(meta.get("currency") or "KRW"),
+        "currency": str(meta.get("currency") or ""),
         "quote_time": quote_time,
         "previous_close": previous_close or None,
         "change_pct": round(change_pct, 4) if change_pct is not None else None,

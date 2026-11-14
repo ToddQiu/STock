@@ -59,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             args.analyzer or config.analysis.mode,
             config.analysis.model,
             watchlist=config.watchlist,
+            api_key=getattr(config.analysis, "api_key", None),
         )
         store = NewsStore(config.storage.database)
     except (OSError, ValueError, RuntimeError) as exc:

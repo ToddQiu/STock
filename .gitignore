@@ -12,3 +12,14 @@ node_modules/
 deploy/secrets/
 .hosted-runtime/
 STock-research-notes*.json
+
+.credentials/
+.qa-runtime/
+.stock-assistant/
+artifacts/
+dist/
+tmp/
+.pytest_cache/
+*.zip
+*.7z
+*.exe

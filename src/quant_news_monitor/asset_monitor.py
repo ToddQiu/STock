@@ -564,6 +564,7 @@ class CrossAssetMonitor:
                     config.analysis.mode,
                     config.analysis.model,
                     watchlist=config.watchlist,
+                    api_key=getattr(config.analysis, "api_key", None),
                 )
                 news, collected_errors = _collect_and_analyze_news(
                     RecordingAnalyzer(analyzer,self.ledger) if self.ledger else analyzer,
@@ -710,6 +711,7 @@ class CrossAssetMonitor:
                 config.analysis.mode,
                 config.analysis.model,
                 watchlist=config.watchlist,
+                api_key=getattr(config.analysis, "api_key", None),
             )
             news, collected_errors = _collect_and_analyze_news(
                 RecordingAnalyzer(analyzer,self.ledger) if self.ledger else analyzer,

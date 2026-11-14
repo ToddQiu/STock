@@ -22,7 +22,16 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 API_PATHS = ("/api/health", "/api/dashboard", "/api/news", "/api/assets", "/api/indices",
              "/api/social", "/api/features", "/api/fundamentals", "/api/research",
-             "/api/research/cards", "/api/research/companies", "/api/research/earnings")
+             "/api/research/cards", "/api/research/companies", "/api/research/earnings",
+             "/api/portfolios", "/api/investment", "/api/portfolio/research", "/api/portfolio/backtests",
+             "/api/research/inputs", "/api/research/valuations",
+             "/api/research/earnings/annotations")
+UI_PATHS = ("/app.js", "/styles.css", "/startup_memory.js", "/watchlist.js", "/chart_tools.js",
+            "/research.js", "/earnings.js", "/social.js", "/workbench.js", "/indices.js", "/annotations.js",
+            "/investment_core.js", "/investment.js", "/portfolio_books.js", "/portfolio_books.css",
+            "/portfolio_research.js", "/portfolio_research_core.js", "/portfolio_research.css",
+            "/valuation_core.js", "/valuation.js", "/backtest_core.js", "/backtest_learning.js",
+            "/backtest.js", "/backtest.css", "/assistant.js", "/assistant.css")
 
 
 def digest(path):
@@ -124,19 +133,23 @@ def verify_site(domain, key, *, attempts=1):
         if attempt + 1 == attempts:
             raise RuntimeError("HTTPS health check failed; check DNS, ports 80/443 and Caddy logs")
         time.sleep(5)
-    for path in ("/", "/app.js", *API_PATHS, "/api/research/export"):
+    for path in ("/", *UI_PATHS, *API_PATHS, "/api/research/export"):
         if request(path, False)[0] != 401:
             raise RuntimeError(f"Authentication guard failed: {path}")
         status, content = request(path, True)
         if status != 200:
             raise RuntimeError(f"Authenticated request failed: {path} HTTP {status}")
-        if path == "/" and b'data-view-target="portfolio"' not in content:
+        if path == "/" and not all(marker in content for marker in (
+                b'data-view-target="portfolio"', b'id="research-backtest-panel"', b'id="research-valuation-panel"')):
             raise RuntimeError("Not the full STock application")
         if path in API_PATHS:
             payload = json.loads(content)
             if not isinstance(payload, dict) or payload.get("error"):
                 raise RuntimeError(f"API did not return a valid snapshot: {path}")
-    print("HTTPS, authentication, full UI, research export and 12 APIs passed. Source freshness still requires review.")
+    if request("/api/assistant/status", False)[0] != 401 or request("/api/assistant/status", True)[0] != 403:
+        raise RuntimeError("Desktop-only assistant boundary failed")
+    print(f"HTTPS, authentication, {len(UI_PATHS)} UI resources, research export and {len(API_PATHS)} APIs passed. "
+          "Desktop-only AI remains disabled; source freshness still requires review.")
 
 
 class Deployment:

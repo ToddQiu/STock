@@ -14,7 +14,15 @@ foreach ($file in @($archive, $checksumFile)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing release file: $file" }
 }
 $expected = (Get-Content -LiteralPath $checksumFile -Raw).Trim()
-if ($expected -cnotmatch '^[a-f0-9]{64}$' -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+$stream = [System.IO.File]::OpenRead($archive)
+$sha = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+} finally {
+    $stream.Dispose()
+    $sha.Dispose()
+}
+if ($expected -cnotmatch '^[a-f0-9]{64}$' -or $actual -ne $expected) {
     throw 'Release checksum failed. Nothing was sent to a server.'
 }
 if ($CheckOnly) {

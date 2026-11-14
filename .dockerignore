@@ -6,6 +6,7 @@
 !src/quant_news_monitor/
 !src/quant_news_monitor/*.py
 !src/quant_news_monitor/company_landscape.json
+!src/quant_news_monitor/assistant_knowledge.json
 !src/quant_news_monitor/ui/
 !src/quant_news_monitor/ui/*.html
 !src/quant_news_monitor/ui/*.js

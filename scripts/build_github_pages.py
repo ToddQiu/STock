@@ -56,6 +56,8 @@ def publication_files() -> dict[str, bytes]:
                  'deploy/check-container.py',
                  'scripts/prepare_hosted_translation.py', 'tests/test_hosted.py',
                  'tests/test_hosted_translation.py',
+                 'tests/test_portfolio_alerts.py', 'tests/test_portfolio_monitor.py',
+                 'tests/test_desktop_workbench.cjs', 'tests/test_startup_memory.cjs',
                  'translation_runtime/package.json', 'translation_runtime/package-lock.json',
                  'translation_runtime/worker.mjs', 'translation_runtime/prepare.mjs'):
         files[name] = (ROOT / name).read_bytes()

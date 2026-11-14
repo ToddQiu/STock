@@ -8,10 +8,10 @@ version = "0.1.0"
 description = "A lightweight news event monitor for CN, HK, and US equities"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["protego>=0.3,<1", "defusedxml>=0.7,<1", "openpyxl>=3.1,<4", "tzdata; sys_platform == 'win32'"]
+dependencies = ["protego>=0.3,<1", "defusedxml>=0.7,<1", "openpyxl>=3.1,<4", "exchange-calendars>=4.13,<5", "reportlab>=4.4,<5", "openai>=2.0.0,<3", "tzdata; sys_platform == 'win32'"]
 
 [project.optional-dependencies]
-ai = ["openai>=2.0.0"]
+ai = ["openai>=2.0.0,<3"]
 translation = ["sentencepiece==0.2.1"]
 
 [project.scripts]
@@ -22,7 +22,7 @@ news-monitor-ui = "quant_news_monitor.webapp:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-quant_news_monitor = ["ui/*", "company_landscape.json"]
+quant_news_monitor = ["ui/*", "company_landscape.json", "security_directory.json", "security_products.json", "assistant_knowledge.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

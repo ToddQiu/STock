@@ -14,7 +14,7 @@ from typing import Any
 class SnapshotStore:
     """One replaceable, non-authoritative snapshot per monitor in the existing DB."""
 
-    KEYS = frozenset({"assets", "portfolio", "korea", "adr", "charts", "indices"})
+    KEYS = frozenset({"assets", "portfolio", "portfolio_risk", "korea", "adr", "charts", "indices", "security_profiles"})
     MAX_BYTES = 4_000_000
 
     def __init__(self, path: str | Path, *, interval_seconds: float = 15):

@@ -1,0 +1,63 @@
+.portfolio-metric-band.has-realized { grid-template-columns: repeat(4, minmax(118px, 1fr)) repeat(3, minmax(158px, 1.25fr)); overflow-x: auto; }
+.portfolio-metric-band.has-realized > div { display: block; grid-column: auto; border-bottom: 0; border-right: 1px solid var(--line); padding: 14px 10px; }
+.portfolio-metric-band.has-realized > div:last-child { border-right: 0; }
+.portfolio-metric-band.has-realized > div strong { margin-top: 5px; font-size: clamp(15px, 1.25vw, 20px); white-space: nowrap; overflow: visible; overflow-wrap: normal; text-overflow: clip; font-variant-numeric: tabular-nums; }
+.portfolio-metric-band.has-realized > div small { display: none; }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile { display: grid; grid-template-columns: auto 1fr; align-content: start; align-items: baseline; column-gap: 8px; }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile > span { grid-column: 1 / -1; }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile > small { display: block; margin: 0; white-space: nowrap; }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile > small[hidden] { display: none; }
+#portfolio-realized-tile > #portfolio-realized-open { display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 5px; }
+#portfolio-realized-open > span { grid-column: 1 / -1; }
+#portfolio-realized-open > #portfolio-realized-pct { display: block; margin: 0; white-space: nowrap; }
+#portfolio-realized-pct.positive { color: var(--positive); }
+#portfolio-realized-pct.negative { color: var(--negative); }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile { column-gap: 5px; }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile strong,
+.portfolio-metric-band.has-realized #portfolio-realized-pnl { font-size: clamp(14px, 1.12vw, 18px); }
+.portfolio-metric-band.has-realized > .portfolio-pnl-tile > small,
+#portfolio-realized-open > #portfolio-realized-pct { font-size: 11px; }
+.portfolio-pnl-tile small.positive { color: var(--positive); }
+.portfolio-pnl-tile small.negative { color: var(--negative); }
+#portfolio-realized-pnl.positive { color: var(--positive); }
+#portfolio-realized-pnl.negative { color: var(--negative); }
+.portfolio-metric-band.has-realized > div > span { white-space: nowrap; }
+#portfolio-realized-open, #portfolio-cash-open { display: block; width: 100%; border: 0; padding: 0; text-align: left; color: inherit; background: transparent; }
+#portfolio-realized-open > span { white-space: nowrap; }
+#portfolio-cash-open .portfolio-cash-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+#portfolio-cash-open .portfolio-cash-edit { color: var(--info); font-size: 12px; }
+.portfolio-cash-dialog { width: min(1040px, calc(100vw - 32px)); }
+.portfolio-cash-dialog form { display: grid; gap: 14px; }
+.portfolio-cash-dialog p { margin: 0; }
+.portfolio-cash-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); align-items: center; gap: 12px; padding: 8px 0; }
+.portfolio-cash-row label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.portfolio-cash-row input[type="checkbox"] { width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; flex: 0 0 auto; accent-color: var(--info); }
+.portfolio-cash-row input[type="text"] { width: 100%; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.portfolio-cash-row input:disabled { opacity: .5; }
+#portfolio-cash-error { color: var(--danger); }
+.portfolio-trades-dialog { width: min(1080px, calc(100vw - 32px)); }
+.portfolio-trades-dialog > article { display: grid; gap: 16px; max-height: calc(100dvh - 48px); overflow-y: auto; }
+.trade-heading, .trade-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.trade-summary { display: flex; gap: 24px; flex-wrap: wrap; }
+.trade-summary > span { color: var(--muted); font-size: 12px; }
+.trade-summary strong { display: block; color: var(--ink); font-size: 18px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.trade-table-scroll { overflow-x: auto; }
+.trade-table-scroll table { width: 100%; min-width: 800px; border-collapse: collapse; font-size: 13px; }
+.trade-table-scroll th, .trade-table-scroll td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-variant-numeric: tabular-nums; }
+.trade-table-scroll th { color: var(--muted); font-weight: 400; }
+.trade-table-scroll td small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.trade-record-id { max-width: 22ch; overflow-wrap: anywhere; }
+.portfolio-trade-manual-dialog [hidden] { display: none; }
+.trade-rationale { margin-top: 8px; min-width: 130px; max-width: 320px; color: var(--ink); }
+.trade-rationale summary { cursor: pointer; color: var(--info); }
+.trade-rationale dl { margin: 8px 0 0; }
+.trade-rationale dt { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.trade-rationale dd { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.portfolio-trade-manual-dialog { width: min(660px, calc(100vw - 32px)); }
+.portfolio-trade-manual-dialog > form { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.portfolio-trades-dialog *, .portfolio-trade-manual-dialog * { font-family: var(--font-ui); font-synthesis: none; }
+
+.portfolio-balance-sections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.portfolio-balance-sections h3 { margin: 0 0 8px; font-size: 14px; }
+.portfolio-balance-sections .portfolio-cash-row { grid-template-columns: 105px minmax(0, 1fr); gap: 8px; }
+@media (max-width: 800px) { .portfolio-balance-sections { grid-template-columns: minmax(0, 1fr); gap: 16px; } }

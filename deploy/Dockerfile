@@ -19,6 +19,7 @@ COPY translation_runtime/worker.mjs translation_runtime/prepare.mjs ./translatio
 COPY scripts/prepare_hosted_translation.py ./scripts/
 RUN python scripts/prepare_hosted_translation.py --root /app
 COPY config.example.json ./
+COPY deploy/manage.py ./deploy/
 USER stock
 EXPOSE 8080
 CMD ["python", "-m", "quant_news_monitor.hosted", "--host", "0.0.0.0"]

@@ -23,7 +23,8 @@ jobs:
           .venv/bin/pip install .
           PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_hosted*.py' -v
           .venv/bin/python -m unittest discover -s tests -p test_deploy.py -v
-          node --test tests/test_pages_core.mjs
+          .venv/bin/python -m unittest discover -s tests -p test_portfolio*.py -v
+          node --test tests/test_pages_core.mjs tests/test_desktop_workbench.cjs tests/test_startup_memory.cjs
           .venv/bin/python scripts/package_hosted.py --output output/ci-launch
       - name: Real Linux image, persistence, translation and TLS proxy
         run: |

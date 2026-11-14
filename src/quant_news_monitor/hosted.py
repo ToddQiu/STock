@@ -41,7 +41,7 @@ def initialize_workspace(root: Path, template: Path) -> Path:
     if root.exists() and any(root.iterdir()):
         raise ValueError("Use a new empty directory; never expose the desktop workspace")
     raw = json.loads(template.read_text(encoding="utf-8"))
-    if (raw.get("portfolio") != {"positions": [], "principal_cny": 0}
+    if (raw.get("portfolio") != {"positions": [], "principal_cny": 0} or raw.get("portfolios")
             or raw.get("analysis", {}).get("mode") != "rules"):
         raise ValueError("Hosted template must have empty holdings, zero principal and rules analysis")
     raw["storage"] = {"database": "data/monitor.db", "alerts": "data/alerts.jsonl"}
@@ -69,6 +69,8 @@ def read_access_key(path: Path) -> str:
 
 
 class HostedState(AppState):
+    portfolio_desktop_notifications = False
+
     def set_asset_system_notifications(self, enabled: bool) -> bool:
         return super().set_asset_system_notifications(False)
 

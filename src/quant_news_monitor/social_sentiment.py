@@ -458,8 +458,9 @@ def build_social_dashboard(posts: list[dict], runs: list[dict], watches: tuple[W
 
 
 class SocialSentimentMonitor:
-    def __init__(self, config_path: str | Path, ledger: ResearchLedger | None = None, *, trump_snapshot=None):
+    def __init__(self, config_path: str | Path, ledger: ResearchLedger | None = None, *, trump_snapshot=None, news_health=None):
         self.trump_snapshot = trump_snapshot
+        self.news_health = news_health
         self.config = ConfigStore(config_path)
         root = Path(config_path).resolve().parent
         self.ledger = ledger or ResearchLedger(root / "data" / "research.db")
@@ -477,9 +478,11 @@ class SocialSentimentMonitor:
         self._last_error = None
         self.web_client = PublicDiscussionClient(root / "data" / "social_web_cache.db")
         self.discovery_catalog = SocialDiscoveryCatalog(root)
+        from .attention_sampler import AttentionSampler
+        self.attention_sampler = AttentionSampler(self.ledger)
 
     def settings(self) -> dict:
-        return {"enabled":True,"interval_seconds":60,"sources":{},"web_sources":[],"web_interval_seconds":300,"stock_keywords":{},
+        return {"enabled":True,"interval_seconds":60,"sources":{},"web_sources":[],"web_interval_seconds":60,"stock_keywords":{},
                 **(self.config.read().get("social_sentiment") or {})}
 
     def start(self) -> None:
@@ -537,6 +540,25 @@ class SocialSentimentMonitor:
                 settings = self.settings()
                 if settings.get("enabled", True):
                     self.trigger_refresh()
+                    with self.store._session() as db:
+                        health = {key: False for key in PLATFORMS}
+                        for key in health:
+                            run = db.execute("SELECT status,checked_at,diagnostics FROM social_runs WHERE platform=? ORDER BY checked_at DESC LIMIT 1", (key,)).fetchone()
+                            diagnostic = json.loads(run[2]) if run else {}
+                            interval = public_source_interval(key, settings.get("web_interval_seconds", 60)) if key in WEB_SOURCES else settings.get("interval_seconds", 60)
+                            healthy = run and (run[0] == "connected" or run[0] == "partial" and not diagnostic.get("latest_error") and diagnostic.get("query_completed", 0) > 0)
+                            health[key] = bool(healthy and (utc_now()-strict_time(run[1])).total_seconds() <= max(180, interval*3))
+                    from .attention_sampler import NAMES
+                    health = {NAMES.get(k, k): v for k, v in health.items()}
+                    news_run = self.news_health() if self.news_health else None
+                    health["新闻"] = bool(news_run and not news_run.get("errors") and not news_run.get("offline")
+                        and news_run.get("finished_at") and (utc_now()-strict_time(news_run["finished_at"])).total_seconds() <= 180)
+                    self.attention_sampler.tick({"platforms": [p for p in PLATFORMS if self._configured(p, settings)],
+                        "keywords": settings.get("stock_keywords", {}),
+                        "news_sources": self.config.read().get("sources", {}),
+                        "sources": {k: {f: v.get(f) for f in ("feed_url", "changed_at")} for k, v in settings.get("sources", {}).items()},
+                        "watches": [(w.market, w.symbol) for w in load_config(self.config.path).watchlist]},
+                        health=health)
                     if settings.get("web_sources"):
                         self.discovery_catalog.refresh()
                     now = utc_now()
@@ -545,6 +567,7 @@ class SocialSentimentMonitor:
                     interval = max(1, min(60, min(due))) if due else 60
                     if self._refreshing:
                         interval = 60
+                    interval = min(interval, max(1, self.attention_sampler.seconds_until_due()))
             except Exception:
                 self._last_error = "采集调度异常，正在等待重试"
             self._wake.wait(interval)
@@ -571,8 +594,8 @@ class SocialSentimentMonitor:
             settings["stock_keywords"] = {**settings.get("stock_keywords", {}), **normalized}
         if "web_interval_seconds" in payload:
             interval = int(payload["web_interval_seconds"])
-            if interval < 300 or interval > 3600:
-                raise ValueError("网页采样间隔须在 5 到 60 分钟之间")
+            if interval < 60 or interval > 3600:
+                raise ValueError("网页采样间隔须在 1 到 60 分钟之间")
             settings["web_interval_seconds"] = interval
         if "web_sources" in payload:
             sources = payload["web_sources"]

@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 import time
 
+sys.path.insert(0, "/app/deploy")
+from manage import API_PATHS, UI_PATHS
 key = Path("/run/secrets/access_key").read_text().strip()
 auth = "Basic " + base64.b64encode(("stock:" + key).encode()).decode()
 
@@ -32,18 +34,19 @@ if "--persist" in sys.argv:
     print("Container restart preserved principal and the same workspace.")
     raise SystemExit(0)
 
-for path in ("/", "/app.js", "/research.js", "/api/dashboard", "/api/research/export", "/api/health"):
+for path in ("/", *UI_PATHS, "/api/research/export"):
     assert request(path, authorized=False)[0] == 401, path
     assert request(path)[0] == 200, path
 assert request("/api/portfolio/principal", "POST", {"principal_cny": 999}, origin="https://evil.example")[0] == 403
 assert request("/api/portfolio/principal", "POST", {"principal_cny": 321})[0] == 200
 for path in ("/config.json", "/data/monitor.db", "/../config.json"):
     assert request(path)[0] == 404, path
-for path in ("/api/health", "/api/dashboard", "/api/news", "/api/assets", "/api/indices",
-             "/api/social", "/api/features", "/api/fundamentals", "/api/research",
-             "/api/research/cards", "/api/research/companies", "/api/research/earnings"):
+for path in API_PATHS:
+    assert request(path, authorized=False)[0] == 401, path
     status, body = request(path)
     assert status == 200 and isinstance(json.loads(body), dict), path
+assert request("/api/assistant/status", authorized=False)[0] == 401
+assert request("/api/assistant/status")[0] == 403
 print("Real container HTTP, authentication, CSRF, private paths and full-module APIs passed.")
 
 from tempfile import TemporaryDirectory

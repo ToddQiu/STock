@@ -18,6 +18,7 @@ from typing import Callable
 from .analyzers import Analyzer
 from .models import MarketMovement, NewsItem, iso_utc, utc_now
 from .news_transport import retry_delay
+from .movement_reason import company_search_name, movement_reason
 
 
 TRADINGVIEW_COLUMNS = (
@@ -364,41 +365,36 @@ class MarketMovementScanner:
     ) -> MarketMovement:
         rule = next(rule for rule in MARKET_RULES if rule.market == candidate.market)
         articles = _fetch_bing_articles(candidate, rule.language, self.timeout_seconds, self.now())
-        evidence = max(articles, key=lambda item: item.rank, default=None)
-        if evidence is None:
+        articles = [article for article in articles if detected_at - timedelta(hours=72) <= article.published_at <= detected_at]
+        if not articles:
             return self._without_evidence(candidate, scan_id, detected_at)
 
-        item = NewsItem(
-            market=candidate.market,
-            symbol=candidate.symbol,
-            title=evidence.title,
-            summary=evidence.summary,
-            source=evidence.source,
-            url=evidence.url,
-            published_at=evidence.published_at,
-            discovered_at=detected_at,
-            target_name=candidate.name,
-        )
-        analysis = self.analyzer.analyze(item)
-        category = evidence.category if evidence.category != "other" else analysis.event_type
-        fallback = _headline_direction(str(analysis.metadata.get("evidence_text", ""))) if analysis.metadata else evidence.direction
-        analyzed_direction = _sign(analysis.direction) or (fallback if analysis.metadata.get("allow_direction_fallback", True) else 0)
-        price_direction = _sign(candidate.change_pct)
-        aligned = analyzed_direction == price_direction if analyzed_direction else None
-        confidence = _reason_confidence(evidence, category, aligned, candidate.relative_volume, analysis.confidence)
-
-        if category == "other" or evidence.rank < 5 or analysis.metadata.get("direction_eligible") is False:
-            summary = (
-                f"未发现近72小时内足以解释本次异动的明确公司级催化。"
-                f"最新相关报道为“{evidence.title}”，更可能是板块、资金或技术面共同作用，等待公告确认。"
+        fallback = None
+        for evidence in sorted(articles, key=lambda item: item.rank, reverse=True):
+            item = NewsItem(
+                market=candidate.market,
+                symbol=candidate.symbol,
+                title=evidence.title,
+                summary=evidence.summary,
+                source=evidence.source,
+                url=evidence.url,
+                published_at=evidence.published_at,
+                discovered_at=detected_at,
+                target_name=candidate.name,
+                target_aliases=(company_search_name(candidate.name),),
             )
-            confidence = min(confidence, 0.35)
+            analysis = self.analyzer.analyze(item)
+            details = movement_reason(item, analysis, candidate.change_pct, detected_at)
+            if fallback is None:
+                fallback = evidence, analysis, details
+            if details["status"] == "linked":
+                break
         else:
-            relation = "方向一致" if aligned is True else "方向不一致" if aligned is False else "方向性尚不明确"
-            summary = (
-                f"最可能由{_event_label(category)}驱动：{evidence.title}。"
-                f"该公开信息与本次价格异动{relation}，属于时序和内容匹配，不代表因果已经证实。"
-            )
+            evidence, analysis, details = fallback
+        category = details.get("category", "unconfirmed")
+        summary = "".join(details.get(key, "") for key in ("fact_summary", "summary", "relation_text"))
+        # Confidence is retained as an internal research signal, never a causal probability.
+        confidence = min(0.55, analysis.confidence) if details["status"] == "linked" else 0.0
         return _movement_from_candidate(
             candidate,
             scan_id,
@@ -408,6 +404,7 @@ class MarketMovementScanner:
             confidence=confidence,
             evidence=evidence,
             analyzer=analysis.analyzer,
+            reason_details=details,
         )
 
     def _without_evidence(
@@ -416,17 +413,14 @@ class MarketMovementScanner:
         scan_id: str,
         detected_at: datetime,
     ) -> MarketMovement:
-        summary = (
-            "近72小时未检索到可直接验证的公司级公开消息；"
-            "当前更可能由板块联动、资金面、技术性交易或低流动性放大造成，需等待公告确认。"
-        )
+        summary = "原因未核实"
         return _movement_from_candidate(
             candidate,
             scan_id,
             detected_at,
             category="unconfirmed",
             summary=summary,
-            confidence=0.20,
+            confidence=0.0,
             evidence=None,
             analyzer=getattr(self.analyzer, "name", "unknown"),
         )
@@ -525,7 +519,7 @@ def _fetch_bing_articles(
         title = _child_text(entry, "title")
         summary = _child_text(entry, "description")
         published_at = _feed_datetime(_child_text(entry, "pubdate"))
-        if not title or published_at < cutoff:
+        if not title or not cutoff <= published_at <= now:
             continue
         url = _direct_news_url(_child_text(entry, "link"))
         if not url or not _looks_like_article(url, title):
@@ -569,28 +563,6 @@ def _article_rank(
     return rank
 
 
-def _reason_confidence(
-    evidence: EvidenceArticle,
-    category: str,
-    aligned: bool | None,
-    relative_volume: float,
-    analyzer_confidence: float,
-) -> float:
-    value = 0.32
-    if category != "other":
-        value += 0.18
-    if aligned is True:
-        value += 0.14
-    elif aligned is False:
-        value -= 0.18
-    if evidence.rank >= 10:
-        value += 0.08
-    if relative_volume >= 3:
-        value += 0.04
-    value += min(0.10, max(0.0, analyzer_confidence) * 0.10)
-    return round(max(0.15, min(0.90, value)), 2)
-
-
 def _movement_from_candidate(
     candidate: MovementCandidate,
     scan_id: str,
@@ -601,6 +573,7 @@ def _movement_from_candidate(
     confidence: float,
     evidence: EvidenceArticle | None,
     analyzer: str,
+    reason_details: dict | None = None,
 ) -> MarketMovement:
     return MarketMovement(
         scan_id=scan_id,
@@ -626,6 +599,7 @@ def _movement_from_candidate(
         evidence_source=evidence.source if evidence else "",
         evidence_published_at=evidence.published_at if evidence else None,
         analyzer=analyzer,
+        reason_details=reason_details or {},
     )
 
 
@@ -711,22 +685,6 @@ def _headline_direction(text: str) -> int:
     positive = sum(1 for word in POSITIVE_WORDS if word in text)
     negative = sum(1 for word in NEGATIVE_WORDS if word in text)
     return _sign(positive - negative)
-
-
-def _event_label(category: str) -> str:
-    return {
-        "earnings": "财报业绩",
-        "guidance": "业绩指引",
-        "m_and_a": "并购重组",
-        "capital_action": "资本运作",
-        "regulation": "监管审批",
-        "legal": "法律事项",
-        "order": "订单合作",
-        "capacity": "投资扩产",
-        "management": "管理层变动",
-        "analyst": "机构评级",
-        "product": "产品研发",
-    }.get(category, "公开消息")
 
 
 def _sign(value: float | int) -> int:
