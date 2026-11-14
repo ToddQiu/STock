@@ -75,7 +75,7 @@
   "src/quant_news_monitor/cli.py": "909e2774bd6227c1c616c136fbea6550567f856695ff8edbe69fd408423991e6",
   "src/quant_news_monitor/company_landscape.json": "c60926a669959fda2c184e2027b97f42139ecee2fed12fc315cb78c499039a15",
   "src/quant_news_monitor/company_landscape.py": "73fb2ca50740be95fa7a47a67d60f044b06ef3f4f7e75eeabd26bf70502bbc6f",
-  "src/quant_news_monitor/config.py": "78b53873fb9881bfcd3c7674deba4fac0e60343f1de319fd4432b8aaeaa68389",
+  "src/quant_news_monitor/config.py": "6bf9f58dc110fe8ba55e0be628ae773c1e79753ce22bebb952c52b8fc16cd2ad",
   "src/quant_news_monitor/config_store.py": "b75fe89569a85dfeaec09086ab409e9679ece13845085eead67e87eff4be33d2",
   "src/quant_news_monitor/earnings_calendar.py": "7b8ec34ccd1fc66d40862bf211fb4c01d9f8b74e251a1e840b9bbe6e7fffad50",
   "src/quant_news_monitor/etf_research.py": "b970f6bc7a104f5a2775b997bfbfa80e28a6d000ecf553c2ceb7ccda9a1a54f6",
@@ -216,7 +216,8 @@
   "translation_runtime/package.json": "bf31ba0c1dd6d1b25ea640d44662a832b9e53527713c5c6ba908434042daf3bc",
   "translation_runtime/prepare.mjs": "bc301f1bc29c0cf1697711d1806322024d3bd578f0088724abce9eae41602bd1",
   "translation_runtime/worker.mjs": "d6d4741e41077394e24cc70c7ebfc42be667118cb8c526b71aff0bc2ac18ba77",
-  ".github/workflows/windows-release.yml": "2844f9a7e5f0f98f04303e8c4746cc1621e4cdffb7df7686e16569543d661219",
+  ".github/workflows/windows-release.yml": "e747b98a63ec95eb08c92e7a93d908df99d8bfb931e77410d6d8c476ee45e821",
   "tests/check_desktop_installer.py": "ab56e55c8513cd1e6e6d6b75270894da5ed21adcebd7475a3582d5b02b48b456",
-  "tests/check_portable_package.cjs": "0f181e1399c080933b9b2ddccc9309769337d332bdb1bc84c384de892884b84c"
+  "tests/check_portable_package.cjs": "f7206c979e826d304686842713db255234542695b17ac4ae1c3297b2e8ba9b47",
+  "tests/test_empty_watchlist.py": "71c70450b98c746137728e9e18ab5b97031affc102ec480643e0fab457a20667"
 }

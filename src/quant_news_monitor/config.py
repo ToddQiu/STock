@@ -95,9 +95,6 @@ def load_config(path: str | Path) -> AppConfig:
                 aliases=aliases,
             )
         )
-    if not watchlist:
-        raise ValueError("watchlist 不能为空")
-
     rss_feeds = tuple(
         {
             "name": str(feed.get("name") or "custom-rss"),

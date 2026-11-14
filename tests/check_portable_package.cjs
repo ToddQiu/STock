@@ -45,8 +45,6 @@ async function close(app,url){
     const config=JSON.parse(fs.readFileSync(path.join(folder,'resources/app/default-config.json'),'utf8'));
     assert.deepEqual(config.portfolio,{positions:[],principal_cny:0});
     assert.deepEqual(config.watchlist,[]);
-    config.watchlist=[{market:'US',symbol:'MSFT',name:'Microsoft',query:'Microsoft MSFT',aliases:['Microsoft']}];
-    fs.writeFileSync(path.join(profile,'config.json'),JSON.stringify(config));
     fs.mkdirSync(path.join(profile,'data'),{recursive:true});
     fs.writeFileSync(path.join(profile,'data/inbox.jsonl'),JSON.stringify({market:'US',symbol:'MSFT',title,summary:'Microsoft revenue increased.',source:'manual',url:'https://example.com/packaging-test',published_at:new Date().toISOString()})+'\n');
     current=await launch();let {app,page}=current;
@@ -87,6 +85,9 @@ async function close(app,url){
     await page.evaluate(async()=>{setView('assets',{refresh:false});saveStartupPreferences();await flushStartupMemory();});
     await close(app,url);current=null;
     report.checks.push('graceful shutdown stops only its owned backend');
+    const savedConfig=JSON.parse(fs.readFileSync(path.join(profile,'config.json'),'utf8'));
+    savedConfig.watchlist=[{market:'US',symbol:'MSFT',name:'Microsoft',query:'Microsoft MSFT',aliases:['Microsoft']}];
+    fs.writeFileSync(path.join(profile,'config.json'),JSON.stringify(savedConfig));
     current=await launch();app=current.app;page=current.page;
     assert.equal(page.url(),url,'Stable origin must retain browser memory');
     assert.equal(await page.evaluate(()=>state.currentView),'assets');
