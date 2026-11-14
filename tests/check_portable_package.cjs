@@ -26,6 +26,12 @@ async function launch(){
     const context=browser.contexts()[0];
     const page=context.pages()[0]||await context.waitForEvent('page',{timeout:120000});
     page.on('pageerror',error=>errors.push(error.message));
+    page.on('requestfailed',request=>console.error('Request failed:',request.url(),request.failure()));
+    page.on('response',response=>console.error('Response:',response.status(),response.url()));
+    for(let attempt=0;attempt<100&&!fs.existsSync(path.join(profile,'service-port.json'));attempt++)await sleep(100);
+    const servicePort=JSON.parse(fs.readFileSync(path.join(profile,'service-port.json'),'utf8'));
+    const rootResponse=await fetch(`http://127.0.0.1:${servicePort}/`,{signal:AbortSignal.timeout(10000)});
+    console.error('Independent HTTP check:',rootResponse.status,(await rootResponse.text()).length);
     await page.waitForFunction(()=>typeof startupMemory!=='undefined' && startupMemory.ready && Boolean(state.dashboard),undefined,{timeout:120000});
     assert.ok(fs.existsSync(path.join(profile,'config.json')));
     assert.equal(await page.evaluate(()=>typeof window.stockWindow?.close),'function');

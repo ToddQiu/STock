@@ -1,5 +1,5 @@
 name: Windows installer release
-# Launch the packaged app normally and validate it before installer compression.
+# Check both the ordinary desktop launcher and its local HTTP response before compression.
 on:
   push:
     branches: [main]
