@@ -26,7 +26,7 @@
   "desktop/PORTABLE_README.txt": "6c31695da8aff86cf26c110399b2a74b4bfdb3a7d6986fd1c0f9d52442d45ce1",
   "desktop/preload.cjs": "747f68a184b8b3a15ba6affe377fc58dbed86bfdbcb716a172c1e1d1c608f7b8",
   "desktop/report-window.cjs": "f79ba1a45a446a4e7fca491861aa0f1c2bad8d2d099595901ab32d602e2c1adb",
-  "desktop/server_entry.py": "352cfbeab69cda47caf97cc505f5efffe57474fe470cd5527dd999993ea575f7",
+  "desktop/server_entry.py": "613a11130eed1f2e5475d7ed1a14832ecfa2cb054b5cc2a454fbefb78847b5b3",
   "desktop/THIRD_PARTY_NOTICES.txt": "b4dc267054aca068319b9cc2a804986af666f69dba93bb10fe75c800dbaa8cd9",
   "desktop/window-policy.cjs": "df241fe229b909b28761089821258d0d4fb903f26a2c3f90f0ce857e1f6ab0e5",
   "docs/.nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -216,7 +216,7 @@
   "translation_runtime/package.json": "bf31ba0c1dd6d1b25ea640d44662a832b9e53527713c5c6ba908434042daf3bc",
   "translation_runtime/prepare.mjs": "bc301f1bc29c0cf1697711d1806322024d3bd578f0088724abce9eae41602bd1",
   "translation_runtime/worker.mjs": "d6d4741e41077394e24cc70c7ebfc42be667118cb8c526b71aff0bc2ac18ba77",
-  ".github/workflows/windows-release.yml": "bd8ecb40619a12280fe2dea9304eb96dc0f5a6418001538c7fa8fe583f613909",
+  ".github/workflows/windows-release.yml": "a63131ecf73b85de3fcdf60dfa24d19109b878868cad7e074b6790edfc9981f7",
   "tests/check_desktop_installer.py": "5c7b45031cda63042b1592024ebfdbc3cd97eb90fe24b4647845bde44e38843e",
   "tests/check_portable_package.cjs": "748b3dae5bce91159e4bc6fed7d720259e722aeecb994f5e319f9fb511ce7f7d",
   "tests/test_empty_watchlist.py": "71c70450b98c746137728e9e18ab5b97031affc102ec480643e0fab457a20667"

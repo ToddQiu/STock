@@ -1,5 +1,5 @@
 name: Windows installer release
-# Check both the ordinary desktop launcher and its local HTTP response before compression.
+# Initialize native calendar libraries before starting concurrent monitor threads.
 on:
   push:
     branches: [main]

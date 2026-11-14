@@ -6,6 +6,9 @@ import json
 import sys
 import threading
 
+# Load NumPy's native DLLs before monitors start concurrent Windows threads.
+import exchange_calendars
+
 from quant_news_monitor.webapp import AppState, DashboardServer
 
 
