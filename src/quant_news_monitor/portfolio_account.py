@@ -87,7 +87,7 @@ def apply_account(result, snapshot, account, *, now=None):
             valid = bool(session and stamp and max(session.open, min(now, session.close) - _REFERENCE_AGE) <= stamp
                          <= min(now + timedelta(minutes=1), session.close + timedelta(minutes=5))
                          and regular_price and regular_price > 0 and previous and previous > 0
-                         and not row.get("quote_fetch_error") and (has_regular or row.get("quote_session") not in {"pre", "post"}))
+                         and not row.get("quote_fetch_error") and (has_regular or row.get("quote_session") not in {"pre", "post", "overnight"}))
             daily_amount = (row["quantity"] * (regular_price - previous)) if valid else None
             row["daily_pnl"] = daily_amount
             rate = amount(rates.get(currency))

@@ -1138,7 +1138,7 @@ function renderPortfolioPosition(item) {
   if(item.market === "US") {
     const sessionLine=el("small","portfolio-session-note",`${item.price_label || "最新价"} · ${item.quote_time ? formatDate(item.quote_time,true) : "等待报价"}`);
     sessionLine.title=[item.source_note,item.quote_error].filter(Boolean).join(" · ");
-    if(item.quote_status !== "live")sessionLine.append(el("span","",item.quote_status === "closed" ? " · 休市" : " · 待更新"));
+    if(item.quote_status !== "live")sessionLine.append(el("span","",item.quote_status === "closed" ? " · 休市" : item.quote_status === "delayed" ? " · 延迟" : item.market_session === "overnight" ? " · 夜盘待更新" : " · 待更新"));
     if(item.extended_change_pct != null)sessionLine.append(el("span",scoreClass(item.extended_change_pct),` · 时段 ${signedPercent(item.extended_change_pct)}`));
     asset.append(sessionLine);
   }
@@ -2629,11 +2629,11 @@ function renderRuntime(data) {
 function renderMovements(data) {
   const extended=data.extended_monitor || {rows:[],eligible_count:0,triggered_count:0,threshold_pct:2};
   const extendedRows=extended.rows || [];
-  const sessionCounts={pre:0,regular:0,post:0,closed:0,unknown:0};
+  const sessionCounts={pre:0,regular:0,post:0,overnight:0,closed:0,unknown:0};
   extendedRows.forEach(row=>{sessionCounts[row.market_session]=(sessionCounts[row.market_session] || 0)+1;});
   document.getElementById("us-extended-status").textContent=extendedRows.length
-    ? `美股 ${extendedRows.length} 只 · 盘前 ${sessionCounts.pre} / 常规 ${sessionCounts.regular} / 盘后 ${sessionCounts.post} / 休市 ${sessionCounts.closed} / 时段待确认 ${sessionCounts.unknown} · 盘前盘后有效报价 ${extended.eligible_count} · 触发 ${extended.triggered_count} · 阈值 ±${extended.threshold_pct}%（对常规收盘）`
-    : "美股盘前盘后：暂无美股持仓";
+    ? `美股 ${extendedRows.length} 只 · 盘前 ${sessionCounts.pre} / 常规 ${sessionCounts.regular} / 盘后 ${sessionCounts.post} / 夜盘 ${sessionCounts.overnight} / 休市 ${sessionCounts.closed} / 时段待确认 ${sessionCounts.unknown} · 延长时段有效报价 ${extended.eligible_count} · 触发 ${extended.triggered_count} · 阈值 ±${extended.threshold_pct}%（对常规收盘）`
+    : "美股盘前、盘后及夜盘：暂无美股持仓";
   const stats = data.movement_stats || {};
   const scope = data.movement_scope || {};
   const scopeMarkets = new Set(scope.markets || []);

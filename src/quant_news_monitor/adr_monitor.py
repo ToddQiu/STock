@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from .models import iso_utc, utc_now
 from .startup_cache import SnapshotStore
+from .yahoo_session_quotes import YahooSessionQuotes
 
 
 LOCAL_SYMBOL = "000660.KS"
@@ -19,6 +20,7 @@ ADR_SYMBOL = "SKHY"
 FX_SYMBOL = "KRW=X"
 ORDINARY_SHARES_PER_ADR = 0.1
 REFRESH_INTERVAL_SECONDS = 15
+_US_SESSION_QUOTES = YahooSessionQuotes()
 
 
 def calculate_adr_premium(
@@ -171,7 +173,10 @@ def _fetch_yahoo_quote(symbol: str, timeout_seconds: int) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise ValueError(f"{symbol} 暂无行情")
     meta = result.get("meta") or {}
-    if str(meta.get("symbol") or "").upper() != symbol.upper():
+    actual = str(meta.get("symbol") or "").upper()
+    fx_alias = (symbol.upper() in {'CNY=X', 'HKD=X', 'KRW=X'} and actual == 'USD' + symbol.upper()
+                and meta.get('instrumentType') == 'CURRENCY' and meta.get('currency') == symbol[:3].upper())
+    if actual != symbol.upper() and not fx_alias:
         raise ValueError("报价主体与请求代码不一致")
     price = float(meta.get("regularMarketPrice") or 0.0)
     if not math.isfinite(price) or price <= 0:
@@ -202,6 +207,12 @@ def _fetch_yahoo_quote(symbol: str, timeout_seconds: int) -> dict[str, Any]:
         for point_time, close in zip(timestamps, closes)
         if close is not None
     ]
+    latest = None
+    if meta.get('exchangeTimezoneName') == 'America/New_York' and meta.get('instrumentType') in {'EQUITY', 'ETF'}:
+        try:
+            latest = _US_SESSION_QUOTES.fetch(symbol, timeout_seconds)
+        except (OSError, ValueError):
+            pass  # Keep timestamped chart data when the session feed is unavailable.
     return {
         "symbol": symbol,
         "name": meta.get("longName") or meta.get("shortName"),
@@ -213,7 +224,7 @@ def _fetch_yahoo_quote(symbol: str, timeout_seconds: int) -> dict[str, Any]:
         "day_high": max(highs) if highs else price,
         "day_low": min(lows) if lows else price,
         "chart": chart[-240:],
-        **us_quote_fields(result),
+        **us_quote_fields(result, latest=latest),
     }
 
 

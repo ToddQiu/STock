@@ -535,8 +535,8 @@ def _position_analysis(item: dict[str, Any]) -> dict[str, Any]:
         risks.append("近期消息样本不足")
     if item.get("quote_status") != "live":
         risks.append("行情可能不是最新")
-    if item.get("quote_session") in {"pre", "post"}:
-        risks.append("盘前盘后流动性与价差风险")
+    if item.get("quote_session") in {"pre", "post", "overnight"}:
+        risks.append("盘前、盘后及夜盘流动性与价差风险")
     risk_level = "高" if weight >= 50 or (pnl_pct is not None and float(pnl_pct) <= -20) else "中" if risks else "低"
     if weight >= 35:
         action = "控制集中度"

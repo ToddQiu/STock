@@ -45,7 +45,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Regression checks
         run: |
-          python -m pytest tests/test_portfolio_auto_analysis.py tests/test_portfolio_analysis_export.py tests/test_briefing_http.py tests/test_desktop_package_build.py -q
+          python -m pytest tests/test_us_full_day_quotes.py tests/test_us_sessions.py tests/test_portfolio_auto_analysis.py tests/test_portfolio_analysis_export.py tests/test_briefing_http.py tests/test_desktop_package_build.py -q
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p 'test_empty_watchlist.py'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
