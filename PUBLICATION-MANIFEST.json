@@ -1,7 +1,7 @@
 {
   ".dockerignore": "4bee590930d7800987a7676d2d4a55791b944e4435f789887bce2fbc5f53dd7b",
   ".github/workflows/hosted-check.yml": "d356131583ce51436ffc97bfd78df2e18c3f14187fda068442c75b0e145b9a00",
-  ".github/workflows/windows-release.yml": "812232ce4e5c7036c6cb4866248132c7e3cee372415e280da43b8dd59d295bda",
+  ".github/workflows/windows-release.yml": "d9e7e9e7e221a891053bd0dc09e228a419ae3d7a0d683f3714a4a293d4967bf1",
   ".gitignore": "f14af25c634f99fb0e0a1921e0ee5f9a5a1fdf87c9a249879d372f2e087b92a4",
   ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "README.md": "68a8ba520598cc111e9fb5aa250492a274866110d520e73525f8d8e176fa3049",
