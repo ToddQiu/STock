@@ -21,10 +21,10 @@ SetCompressorDictSize 32
 SetDatablockOptimize on
 ShowInstDetails show
 ShowUninstDetails show
-VIProductVersion "1.0.4.0"
+VIProductVersion "1.0.5.0"
 VIAddVersionKey /LANG=1033 "ProductName" "STock"
 VIAddVersionKey /LANG=1033 "FileDescription" "STock Windows desktop installer"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.0.4"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.0.5"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "STock"
 
 !define MUI_ICON "${PAYLOAD}\resources\app\logo.ico"
@@ -98,7 +98,7 @@ Section "STock" Main
     WriteRegDWORD HKCU "${REG_KEY}" "Shortcuts" 1
   ${EndIf}
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayName" "STock"
-  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayVersion" "1.0.4"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayVersion" "1.0.5"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayIcon" "$INSTDIR\STock.exe"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'

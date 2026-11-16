@@ -11,7 +11,7 @@
   const select=(label,name,value)=>`<label>${label}<select name="${name}">${options(currencies,value)}</select></label>`;
   const table=(heads,rows)=>`<div class="pr-scroll"><table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${heads.length}">缺少可用样本</td></tr>`}</tbody></table></div>`;
   const source=row=>row?.source_url&&/^https:\/\//.test(row.source_url)?`<a href="${esc(row.source_url)}" target="_blank" rel="noopener noreferrer">${esc(row.source||'原始资料')}</a>`:'来源待补充';
-  let data={histories:{},events:[],peers:[],imports:[],records:[]}, portfolio={},target='US:AAPL',poll=null;
+  let data={histories:{},events:[],peers:[],imports:[],records:[]}, portfolio={},target='US:AAPL',poll=null,loadSequence=0;
   let holdingNames=new Map();
   const holdingLabel=id=>`<span title="${esc(id)}">${esc(holdingNames.get(id)||id)}</span>`;
   let riskBasis='total',riskWindow=60,researchTab='events',valuationTarget='',valuationResult=null;
@@ -49,11 +49,16 @@
   performanceTitle.insertAdjacentHTML('afterend','<p id="pr-source-time" class="pr-muted"></p>');
   const performanceYearInput=assets.querySelector('#pr-performance-year');
   performanceYearInput.setAttribute('aria-label','统计年份');
+  assets.querySelector('#pr-performance-refresh').textContent='更新分析';
+  assets.querySelector('#pr-performance-refresh').title='更新公开行情并按本地公式重算，不调用 AI';
   performanceYearInput.parentElement.firstChild.remove();
   assets.querySelector('#pr-analysis-diagnosis').append(document.querySelector('.portfolio-analysis-column'));
-  const exportAnalysisButton = el('button', 'secondary-button', '导出组合分析');
+  const exportAnalysisButton = el('button', 'secondary-button', '导出组合分析 PDF');
   exportAnalysisButton.type = 'button'; exportAnalysisButton.id = 'pr-export-analysis';
   assets.querySelector('#pr-performance-refresh').after(exportAnalysisButton);
+  const exportExcelButton = el('button', 'secondary-button', '导出 Excel 明细');
+  exportExcelButton.type = 'button'; exportExcelButton.id = 'pr-export-analysis-excel';
+  assets.querySelector('#pr-analysis-settings').append(exportExcelButton);
   assets.querySelector('#pr-performance .pr-controls').append(assets.querySelector('#pr-open-research'));
   assets.querySelector('.pr-analysis-heading').remove();
   document.getElementById('investment-original').after(assets);
@@ -81,7 +86,9 @@
   function namedRows(rows,dashboard=state.dashboard){return rows.map(row=>({...row,name:instrumentName({...row,target:row.target||row.key},dashboard)}));}
   function namedFunds(funds,dashboard=state.dashboard){return Object.fromEntries(Object.entries(funds||{}).map(([id,fund])=>[id,{...fund,holdings:(fund.holdings||[]).map(row=>(row.market||/^(CN|HK|US|KR|FUND):/.test(row.target||row.key||''))?namedRows([row],dashboard)[0]:row)}]));}
   function combined(key){const rows=[...(data[key]||[]),...(data.imports||[]).flatMap(row=>row[key]||[])];return key==='peers'?namedRows(rows):rows;}
-  async function exportAnalysis() {
+  async function exportAnalysis(format = 'pdf') {
+    format = format === 'xlsx' ? 'xlsx' : 'pdf';
+    const exportLabel = format === 'pdf' ? 'PDF' : 'Excel';
     const selected = portfolioContext.id;
     const year = performanceYear, basis = riskBasis, windowDays = riskWindow;
     if (portfolioContext.switching || portfolioContext.writes || state.portfolioDeletePending || portfolio.id !== selected || state.dashboard?._startup_cache) {
@@ -93,6 +100,7 @@
       return;
     }
     exportAnalysisButton.disabled = true;
+    exportExcelButton.disabled = true;
     exportAnalysisButton.setAttribute('aria-busy', 'true');
     exportAnalysisButton.textContent = '正在采集行情…';
     try {
@@ -133,8 +141,8 @@
       const fx = Object.entries(current.fx_details || {}).map(([pair,row])=>({pair,...row}));
       const {rows,overlaps,pairs,dates,unknown,note} = C.lookthrough(positions, funds, {basis,cash_base:account.cash_base,receivable_base:account.receivable_base,payable_base:account.payable_base});
       const disclosed = rows.filter(row=>!row.overlap&&row.origins.some(origin=>snapshot.funds?.[origin]?.partial));
-      exportAnalysisButton.textContent = '正在生成 Excel…';
-      const response = await fetch('/api/portfolio/analysis.xlsx', {method:'POST', cache:'no-store', headers:{'Content-Type':'application/json'},
+      exportAnalysisButton.textContent = `正在生成 ${exportLabel}…`;
+      const response = await fetch(`/api/portfolio/analysis.${format}`, {method:'POST', cache:'no-store', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({portfolio_id:selected, year, performance, risk, diagnosis, holdings, fx, exposure:{overlaps,disclosed,pairs,dates,unknown,note}, context:{
           observed_at:annual.observed_at, annual_errors:annual.errors, risk_errors:snapshot.errors,
           risk_as_of:snapshot.observed_at, quote_as_of:current.runtime?.updated_at, risk_window:windowDays, risk_basis:basis
@@ -143,39 +151,41 @@
         const detail = await response.json().catch(() => ({}));
         throw Error(detail.error || '组合分析导出失败');
       }
-      await downloadAttachment(response, 'STock-组合分析.xlsx');
-      showToast(`${current.name || '组合'}的分析 Excel 已生成`, 'success');
+      await downloadAttachment(response, `STock-组合分析.${format}`);
+      showToast(`${current.name || '组合'}的分析 ${exportLabel} 已生成`, 'success');
     } catch (error) {
       showToast(error.message || '组合分析导出失败', 'error');
     } finally {
       exportAnalysisButton.disabled = false;
+      exportExcelButton.disabled = false;
       exportAnalysisButton.removeAttribute('aria-busy');
-      exportAnalysisButton.textContent = '导出组合分析';
+      exportAnalysisButton.textContent = '导出组合分析 PDF';
     }
   }
   exportAnalysisButton.addEventListener('click', exportAnalysis);
+  exportExcelButton.addEventListener('click', () => exportAnalysis('xlsx'));
   function renderPerformance() {
     const packet=data.performance||{},selected=packet.year===performanceYear,history=selected?packet.histories||{}:{};
-    const model=C.portfolioPerformance(portfolio.positions||[],{cash_base:portfolio.summary?.cash_base,receivable_base:portfolio.summary?.receivable_base,payable_base:portfolio.summary?.payable_base},history,{year:performanceYear});
+    const model=C.portfolioPerformance(portfolio.positions||[],{cash_base:portfolio.summary?.cash_base,receivable_base:portfolio.summary?.receivable_base,payable_base:portfolio.summary?.payable_base},history,{year:performanceYear,allowPartial:true});
     const output=document.getElementById('pr-performance-result'),expanded=new Set([...assets.querySelectorAll('details[open]')].map(row=>row.id));
     const percentage=value=>C.finite(value)?`${value>0?'+':''}${n(value)}%`:'--',tone=value=>C.finite(value)?value>0?'pr-positive':value<0?'pr-negative':'':'';
     const card=(label,value,note,color='')=>`<div class="pr-performance-stat" title="${esc(note)}"><span>${esc(label)}</span><strong class="${color}">${value}</strong><small>${esc(note)}</small></div>`;
-    const period=model.from&&model.to?`${model.from} → ${model.to}`:'等待完整年度行情';
+    const period=model.from&&model.to?`${model.from} → ${model.to}`:packet.busy?'正在补齐历史行情':'暂无共同有效区间';
     const drawdown=model.troughDate?`${model.peakDate} → ${model.troughDate}；${model.recoveryDate?'恢复 '+model.recoveryDate:'区间内未恢复'}`:'共同日期净值的峰值至谷值';
     const currentYear=new Date().getUTCFullYear();
-    output.innerHTML=`<div class="pr-performance-grid">${card(`${performanceYear}${performanceYear===currentYear?'年截至':'年'}模拟收益`,percentage(model.annualReturn),period,tone(model.annualReturn))}${card('最大回撤',percentage(model.maxDrawdown),drawdown,tone(model.maxDrawdown))}${card('年化波动',C.finite(model.volatility)?n(model.volatility)+'%':'--',`${model.samples} 个共同收益区间 · 按252日年化`)}${card('持仓平均相关系数',n(model.averageCorrelation,2),`有效 ${model.validPairs} / ${model.totalPairs} 对 · 中位 ${n(model.medianCorrelation,2)} · ${model.highPairs.length} 对 > 0.7`)}</div>`;
+    output.innerHTML=`<div class="pr-performance-grid">${card(model.status==='partial'?'共同区间模拟收益':`${performanceYear}${performanceYear===currentYear?'年截至':'年'}模拟收益`,percentage(model.annualReturn),period,tone(model.annualReturn))}${card('最大回撤',percentage(model.maxDrawdown),drawdown,tone(model.maxDrawdown))}${card('年化波动',C.finite(model.volatility)?n(model.volatility)+'%':'--',`${model.samples} 个共同收益区间 · 按252日年化`)}${card('持仓平均相关系数',n(model.averageCorrelation,2),`有效 ${model.validPairs} / ${model.totalPairs} 对 · 中位 ${n(model.medianCorrelation,2)} · ${model.highPairs.length} 对 > 0.7`)}</div>`;
     const coefficient=value=>C.finite(value)?`<span class="${tone(value)}">${n(value,2)}</span>`:'--';
     const matrix=table(['标的',...model.targets.map(row=>holdingLabel(row.target))],model.targets.map((row,i)=>[holdingLabel(row.target),...model.matrix[i].map(coefficient)]));
-    output.insertAdjacentHTML('beforeend',`<details id="pr-annual-correlations" ${expanded.has('pr-annual-correlations')?'open':''}><summary>相关性矩阵与高相关持仓 · ${model.validPairs} 对有效</summary><p class="pr-muted">所选年份内同起止日期收益的Pearson相关系数；每对至少20个区间。平均值按有效持仓对等权计算，剔除对角线和重复配对，覆盖不足时只代表这些有效配对。红色为正相关，绿色为负相关；不表示收益好坏。</p><div class="pr-correlation-matrix">${matrix}</div><h4>高相关持仓对（大于0.7）</h4>${table(['持仓A','持仓B','相关系数','区间数'],model.highPairs.map(row=>[holdingLabel(row.a),holdingLabel(row.b),coefficient(row.correlation),row.samples]))}<details><summary>全部配对与缺失原因</summary>${table(['持仓A','持仓B','相关系数','有效区间','日期 / 原因'],model.pairs.map(row=>[holdingLabel(row.a),holdingLabel(row.b),coefficient(row.correlation),row.samples,esc(row.reason||`${row.from} 至 ${row.to}`)]))}</details></details><details id="pr-performance-method" ${expanded.has('pr-performance-method')?'open':''}><summary>计算口径、权重与行情来源</summary><p>${esc(model.method)}</p><p>现金权重 ${C.finite(model.cashWeight)?n(model.cashWeight*100)+'%':'--'}。初始持仓使用选年前最后一个共同有效收盘；当年新增上市、来源缺失、币种不一致等不从组合中偷偷剔除。</p>${table(['标的','初始模拟权重','报价币种','来源'],model.targets.map(row=>[holdingLabel(row.target),C.finite(model.weights.find(weight=>weight.target===row.target)?.weight)?n(model.weights.find(weight=>weight.target===row.target).weight*100)+'%':'--',esc(row.currency||'未知'),source(row)]))}${table(['日期','模拟净值','累计收益','回撤'],model.path.map(row=>[row.date,n(row.value,6),percentage(row.change),percentage(row.drawdown)]))}</details>`);
+    output.insertAdjacentHTML('beforeend',`<details id="pr-annual-correlations" ${expanded.has('pr-annual-correlations')?'open':''}><summary>相关性矩阵与高相关持仓 · ${model.validPairs} 对有效</summary><p class="pr-muted">所选年份内同起止日期收益的Pearson相关系数；每对至少20个区间。平均值按有效持仓对等权计算，剔除对角线和重复配对，覆盖不足时只代表这些有效配对。红色为正相关，绿色为负相关；不表示收益好坏。</p><div class="pr-correlation-matrix">${matrix}</div><h4>高相关持仓对（大于0.7）</h4>${table(['持仓A','持仓B','相关系数','区间数'],model.highPairs.map(row=>[holdingLabel(row.a),holdingLabel(row.b),coefficient(row.correlation),row.samples]))}<details><summary>全部配对与缺失原因</summary>${table(['持仓A','持仓B','相关系数','有效区间','日期 / 原因'],model.pairs.map(row=>[holdingLabel(row.a),holdingLabel(row.b),coefficient(row.correlation),row.samples,esc(row.reason||`${row.from} 至 ${row.to}`)]))}</details></details><details id="pr-performance-method" ${expanded.has('pr-performance-method')?'open':''}><summary>计算口径、权重与行情来源</summary><p>${esc(model.method)}</p><p>现金权重 ${C.finite(model.cashWeight)?n(model.cashWeight*100)+'%':'--'}。按报告起止日的共同有效收盘模拟；缺少年初历史时单列共同区间，不冒充全年收益。新增上市、来源缺失、币种不一致等不从组合中剔除。</p>${table(['标的','初始模拟权重','报价币种','来源'],model.targets.map(row=>[holdingLabel(row.target),C.finite(model.weights.find(weight=>weight.target===row.target)?.weight)?n(model.weights.find(weight=>weight.target===row.target).weight*100)+'%':'--',esc(row.currency||'未知'),source(row)]))}${table(['日期','模拟净值','累计收益','回撤'],model.path.map(row=>[row.date,n(row.value,6),percentage(row.change),percentage(row.drawdown)]))}</details>`);
     const annual=output.querySelector('#pr-annual-correlations');annual.open=true;
     const correlationNote=annual.querySelector('.pr-muted');correlationNote.title=correlationNote.textContent;correlationNote.textContent='年度收益相关性 · 红色正相关，绿色负相关 · 至少20个共同区间';
     document.getElementById('pr-annual-result').replaceChildren(annual);
     document.getElementById('pr-method-result').replaceChildren(output.querySelector('#pr-performance-method'));
     document.getElementById('pr-performance-refresh').disabled=!!packet.busy;
     document.getElementById('pr-performance-year').disabled=!!packet.busy;
-    document.getElementById('pr-source-time').textContent=selected?'行情更新 '+when(packet.observed_at):'本年度行情尚未采集';
-    document.getElementById('pr-performance-status').textContent=packet.busy?'年度行情采集中…':selected?'':'尚未采集本年度行情 · 点击“更新年度行情”';
-    const issues=selected?[...model.issues,...(packet.errors||[])]:[];
+    document.getElementById('pr-source-time').textContent=`本地公式计算 · 持仓估值 ${when(portfolio.runtime?.updated_at)} · 历史采集 ${selected?when(packet.observed_at):'等待采集'}`;
+    document.getElementById('pr-performance-status').textContent=packet.busy?'正在自动更新分析…':!(portfolio.positions||[]).length?'添加持仓后自动计算':selected?'':'正在准备本年度分析…';
+    const issues=selected?[...model.issues,...(packet.errors||[]),...(data.analysis_errors||[])]:[];
     document.getElementById('pr-data-issues').textContent=issues.join('\n');
     const issueButton=document.getElementById('pr-data-status-button');issueButton.hidden=!issues.length;issueButton.textContent=`数据缺项 ${issues.length} · 查看`;
     issueButton.parentElement.hidden=!packet.busy&&selected&&!issues.length;
@@ -290,7 +300,19 @@
       if(selected===portfolioContext.id)document.getElementById('pr-heat-status').textContent='已保存两份带版本、样本、费用与信号的回测快照，可在回测系统重现。';
     }catch(e){if(selected===portfolioContext.id)document.getElementById('pr-heat-status').textContent=`已保存 ${saved} 份；`+e.message;}finally{if(selected===portfolioContext.id)this.disabled=false;}
   };
-  async function load(){const selected=portfolioContext.id;try{const result=await api('/api/portfolio/research');if(selected!==portfolioContext.id)return;data=result;render();error([data.error,...(data.errors||[])].filter(Boolean).join('\n'));clearTimeout(poll);if(data.busy||data.performance?.busy)poll=setTimeout(load,2000);else poll=setTimeout(()=>{if(!document.hidden&&(research.getClientRects().length||assets.getClientRects().length))load();},60000);}catch(e){if(selected===portfolioContext.id)error(e.message);}}
+  async function load(){
+    const selected=portfolioContext.id,year=performanceYear,sequence=++loadSequence;
+    clearTimeout(poll);
+    try{
+      const result=await api('/api/portfolio/research?year='+year);
+      if(selected!==portfolioContext.id||year!==performanceYear||sequence!==loadSequence)return;
+      data=result;render();error([data.error,...(data.errors||[])].filter(Boolean).join('\n'));
+    }catch(e){if(selected===portfolioContext.id&&year===performanceYear&&sequence===loadSequence)error(e.message);}
+    finally{
+      if(selected===portfolioContext.id&&year===performanceYear&&sequence===loadSequence)
+        poll=setTimeout(load,document.hidden?60000:data.busy||data.performance?.busy?2000:30000);
+    }
+  }
   function renderExposure(){
     const fx=Object.entries(portfolio.fx_details||{});
     document.getElementById('pr-fx-result').innerHTML=`<details><summary>估值汇率与来源时间</summary>${table(['货币对','报价','来源','来源时间 / 状态'],fx.map(([pair,row])=>[esc(pair),n(row.price,5),esc(row.source||'待核验'),esc(row.quote_time||'时间未取得')+' · '+esc(({live:'实时',delayed:'延迟',closed:'休市',stale:'旧汇率保留',error:'获取失败',missing:'缺失',reference:'参考',nav:'净值',manual:'手动',unavailable:'不可用'})[row.status]||'未知')]))}</details>`;
@@ -306,7 +328,7 @@
     setPortfolio(value);
     allocations();
     research.querySelector('h3').textContent=(portfolio.name||'默认组合')+' · 同行与事件研究';
-
+    if(!data.performance?.busy&&(portfolio.positions||[]).some(p=>!data.performance?.targets?.includes(p.market+':'+p.symbol)))load();
   }
   document.getElementById('pr-account').addEventListener('submit',async event=>{event.preventDefault();const button=event.target.querySelector('button:not([type="button"])');button.disabled=true;
     if(state.portfolioPrincipalDirty){document.getElementById('pr-account-error').textContent='我的资产中有未保存的本金，请先保存后再修改账户口径。';button.disabled=false;return;}
@@ -345,8 +367,8 @@
   document.getElementById('pr-freeze').onsubmit=async event=>{event.preventDefault();const button=event.target.querySelector('button:not([type="button"])');button.disabled=true;try{if(draftTarget&&draftTarget!==target)throw new Error('草稿标的已切换，请返回原标的或新建独立判断');const values={...Object.fromEntries(new FormData(event.target)),method:'event-forward-v2'};C.freeze(target,data.histories?.[target],combined('events'),values);await api('/api/portfolio/research',{method:'POST',body:{action:'freeze',target,...values,direction:Number(values.direction)}});try{localStorage.removeItem(draftKey());}catch(_){}event.target.reset();event.target.dataset.dirty='';draftTarget='';document.getElementById('pr-event-selection').textContent='';await load();document.getElementById('pr-draft-state').textContent='判断已冻结。原始依据、条件和来源已保留；修订请新建版本。';}catch(e){error(e.message);}finally{button.disabled=false;}};
   document.getElementById('pr-risk-basis').onchange=e=>{riskBasis=e.target.value;allocations();};
   document.getElementById('pr-risk-window').onchange=e=>{riskWindow=Number(e.target.value);allocations();};
-  document.getElementById('pr-performance-year').onchange=e=>{performanceYear=Number(e.target.value);renderPerformance();};
-  document.getElementById('pr-performance-refresh').onclick=async()=>{const selected=portfolioContext.id,button=document.getElementById('pr-performance-refresh');button.disabled=true;document.getElementById('pr-performance-error').textContent='';try{await api('/api/portfolio/research',{method:'POST',body:{action:'refresh_performance',year:performanceYear}});if(selected===portfolioContext.id)await load();}catch(e){if(selected===portfolioContext.id)document.getElementById('pr-performance-error').textContent=e.message;}finally{if(selected===portfolioContext.id)button.disabled=!!data.performance?.busy;}};
+  document.getElementById('pr-performance-year').onchange=e=>{performanceYear=Number(e.target.value);renderPerformance();load();};
+  document.getElementById('pr-performance-refresh').onclick=async()=>{const selected=portfolioContext.id,button=document.getElementById('pr-performance-refresh');button.disabled=true;document.getElementById('pr-performance-error').textContent='';try{await api('/api/portfolio/research',{method:'POST',body:{action:'refresh_performance',year:performanceYear}});await api('/api/portfolio/refresh',{method:'POST',body:{}});if(selected===portfolioContext.id){pollPortfolioStatus();await load();}}catch(e){if(selected===portfolioContext.id)document.getElementById('pr-performance-error').textContent=e.message;}finally{if(selected===portfolioContext.id)button.disabled=!!data.performance?.busy;}};
   document.getElementById('pr-open-research').onclick=()=>{selectCompanyResearch('peers');research.scrollIntoView({block:'start'});document.getElementById('pr-target').focus();};
   document.getElementById('pr-return-portfolio').onclick=()=>{setView('portfolio');window.PortfolioBooks.open(portfolioContext.id);};
   document.getElementById('pr-export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify({...data,portfolio_id:portfolioContext.id,portfolio_name:portfolio.name,exported_at:new Date().toISOString()},null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='STock-private-research.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};

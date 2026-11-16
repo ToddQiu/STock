@@ -3,7 +3,6 @@ name: Windows installer release
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/windows-release.yml]
   workflow_dispatch:
 permissions:
   contents: write
@@ -32,7 +31,7 @@ jobs:
           node-version: '22'
       - name: Install build dependencies
         run: |
-          python -m pip install '.[translation]' pyinstaller
+          python -m pip install '.[translation]' pyinstaller pytest pytest-subtests
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm --prefix desktop ci
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -46,6 +45,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Regression checks
         run: |
+          python -m pytest tests/test_portfolio_auto_analysis.py tests/test_portfolio_analysis_export.py tests/test_briefing_http.py tests/test_desktop_package_build.py -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p 'test_empty_watchlist.py'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p 'test_portfolio*.py'
@@ -53,6 +54,8 @@ jobs:
           python -m unittest discover -s tests -p 'test_remaining_cash.py'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --test tests/test_desktop_workbench.cjs tests/test_startup_memory.cjs tests/test_portfolio_cash.cjs tests/test_portfolio_currency.cjs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --test tests/test_portfolio_auto_analysis.cjs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build empty-profile application
         run: |
@@ -82,8 +85,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           $version = (Get-Content desktop/package.json | ConvertFrom-Json).version
-          $tag = "v$version"
-          $name = "STock-Setup-$version-x64.exe"
+          $releaseVersion = "$version-build.$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT"
+          $tag = "v$releaseVersion"
+          $name = "STock-Setup-$releaseVersion-x64.exe"
           $setup = Get-ChildItem dist/*-x64.exe | Select-Object -First 1
           Copy-Item -LiteralPath $setup.FullName -Destination "dist/$name"
           $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -95,12 +99,14 @@ jobs:
           - 默认持仓、账户余额与监测列表为空，不包含个人数据库、密钥或研究记录。
           - 内置英译中模型；行情和新闻需要联网，AI 分析需自行配置 API 凭据。
           - 本版本未作商业代码签名，Windows 可能显示未知发布者。
+          - 组合分析自动采集公开历史行情并按本地公式计算，不消耗 AI API 额度；支持导出持仓组合分析 PDF。
+          - 提交到 main 后自动构建；本次源码：$env:GITHUB_SHA。覆盖安装保留本机账户数据。
           - 安装、首次启动、离线翻译、数据保留及卸载检查均由 Windows 构建任务验证。
           - Source code (zip/tar.gz) 为源码，普通用户请选择上面的 exe 文件。
 
           SHA-256: $hash
           "@ | Set-Content .qa-runtime/release-notes.md -Encoding utf8
-          gh release create $tag "dist/$name" "dist/$name.sha256" --target $env:GITHUB_SHA --title "STock $version · Windows 安装版" --notes-file .qa-runtime/release-notes.md --draft
+          gh release create $tag "dist/$name" "dist/$name.sha256" --target $env:GITHUB_SHA --title "STock $releaseVersion · Windows 安装版" --notes-file .qa-runtime/release-notes.md --draft
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           gh release edit $tag --draft=false --latest
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

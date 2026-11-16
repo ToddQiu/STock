@@ -57,6 +57,13 @@ def _pairs(data, key, names):
 
 
 def build_analysis_workbook(account, payload, *, captured_at):
+    filename, book = analysis_workbook(account, payload, captured_at=captured_at)
+    output = BytesIO()
+    book.save(output)
+    return filename, output.getvalue()
+
+
+def analysis_workbook(account, payload, *, captured_at):
     """Export one already calculated analysis. Does not fetch, store or recompute market data."""
     stamp = _time(captured_at)
     year = payload.get('year')
@@ -236,7 +243,5 @@ def build_analysis_workbook(account, payload, *, captured_at):
     _table(book, '组合诊断', 'AnalysisDiagnosis', ['主题', '依据', '解释', '检查重点'], diagnosis,
            widths={1: 34, 2: 62, 3: 64, 4: 64}, height=80)
 
-    output = BytesIO()
-    book.save(output)
     safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).strip(' .') or '组合'
-    return f'STock-{safe_name[:60]}-{year}年组合分析-{stamp:%Y%m%d-%H%M%S}.xlsx', output.getvalue()
+    return f'STock-{safe_name[:60]}-{year}年组合分析-{stamp:%Y%m%d-%H%M%S}.xlsx', book

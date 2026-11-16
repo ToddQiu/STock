@@ -6,7 +6,7 @@
 
 **[下载 Windows 安装包（Windows 10/11，64 位）](https://github.com/ToddQiu/STock/releases/latest)**
 
-在发布页 Assets 中选择 `STock-Setup-1.0.4-x64.exe`，下载后双击安装，无需另装 Python 或 Node.js。`Source code` 是供开发者使用的源码。本版本未作商业代码签名，Windows 可能显示未知发布者；下载页提供 SHA-256 校验文件。
+在发布页 Assets 中选择 `STock-Setup-*-x64.exe`，下载后双击安装，无需另装 Python 或 Node.js。`Source code` 是供开发者使用的源码。本版本未作商业代码签名，Windows 可能显示未知发布者；下载页提供 SHA-256 校验文件。
 
 ## 此版本的数据
 
@@ -33,3 +33,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start_desktop_app.ps1
 - 桌面打包脚本：`scripts/build_desktop_package.py`；源码目录不包含第三方运行时，安装包在 GitHub Releases 下载。
 
 `PUBLICATION-MANIFEST.json` 记录本次发布文件的 SHA-256，可用于校验源码副本。
+
+## 自动发布
+
+向本仓库 `main` 推送代码后，GitHub Actions 自动执行回归测试、Windows 打包、安装与卸载验证，通过后发布至 Releases。每次构建有独立编号，旧版本保留；失败时不会发布不完整安装包。也可在 Actions 手动运行 Windows installer release。
+
+这会更新 GitHub 安装包，不会自动修改已安装的软件；下载新包覆盖安装会保留本机账户资料。两个仓库分别推送、分别构建，Client A 不向公开仓库同步账户快照。
+
+本版包含自动组合分析和持仓组合分析 PDF；[固定公式与刷新口径](docs/portfolio-auto-analysis.md)。

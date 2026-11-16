@@ -1,6 +1,6 @@
 {
   "name": "stock-desktop",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Native window for the local STock research application",
   "main": "main.cjs",

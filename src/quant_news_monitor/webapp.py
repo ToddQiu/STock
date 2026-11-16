@@ -150,6 +150,8 @@ class AppState:
         from .portfolio_research import PortfolioResearch
         self.portfolio_research = PortfolioResearch(self)
         self._portfolio_researches = {"default": self.portfolio_research}
+        self._analysis_auto_enabled = start_asset_monitor
+        self._next_analysis_at = 0.0
         self._scheduler.start()
         if start_asset_monitor:
             self.translator.start()
@@ -208,6 +210,14 @@ class AppState:
             if portfolio_id not in self._portfolio_researches:
                 self._portfolio_researches[portfolio_id] = PortfolioResearch(self, portfolio_id)
             return self._portfolio_researches[portfolio_id]
+
+    def refresh_portfolio_analyses(self):
+        # Stagger portfolios so automatic startup does not flood the shared public source.
+        if any(research.performance_busy for research in list(self._portfolio_researches.values())):
+            return
+        for book in portfolios(self.config_store.read()):
+            if book.get("positions") and self.get_portfolio_research(book["id"]).ensure_analysis():
+                break
 
     def portfolio_directory(self, raw=None, current=None):
         raw = self.config_store.read() if raw is None else raw
@@ -1061,6 +1071,12 @@ class AppState:
 
     def _scheduler_loop(self) -> None:
         while not self._stop_event.wait(1.0):
+            if self._analysis_auto_enabled and time.monotonic() >= self._next_analysis_at:
+                self._next_analysis_at = time.monotonic() + 30
+                try:
+                    self.refresh_portfolio_analyses()
+                except Exception:
+                    traceback.print_exc()
             with self._lock:
                 enabled = self.auto_enabled
                 due = time.monotonic() >= self._next_scan_at
@@ -1721,7 +1737,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/portfolio/research":
             try:
-                self._send_json(self.server.app_state.get_portfolio_research((parse_qs(parsed.query).get("portfolio_id") or ["default"])[0]).snapshot())
+                query = parse_qs(parsed.query)
+                research = self.server.app_state.get_portfolio_research((query.get("portfolio_id") or ["default"])[0])
+                year = int(query["year"][0]) if "year" in query else None
+                if year is not None:
+                    research.ensure_analysis(year)
+                self._send_json(research.snapshot(year))
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -1868,7 +1889,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
         try:
-            payload = self._read_json(max_length=1_400_000 if parsed.path in {"/api/research/etf/import", "/api/portfolio/analysis.xlsx"} or parsed.path.startswith("/api/investment/") else 550_000 if parsed.path == "/api/portfolio/research" else 64_000)
+            payload = self._read_json(max_length=1_400_000 if parsed.path in {"/api/research/etf/import", "/api/portfolio/analysis.xlsx", "/api/portfolio/analysis.pdf"} or parsed.path.startswith("/api/investment/") else 550_000 if parsed.path == "/api/portfolio/research" else 64_000)
             if parsed.path in {"/api/portfolio/instrument-analysis.pdf", "/api/portfolio/instrument-analysis/portfolio.pdf"}:
                 if not self._local_assistant():
                     self._send_json({"error": "标的模型分析仅在本机使用"}, status=HTTPStatus.FORBIDDEN)
@@ -1887,15 +1908,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 self._send_attachment(filename, content, "application/pdf", "STock-AI-analysis.pdf")
                 return
-            if parsed.path == "/api/portfolio/analysis.xlsx":
+            if parsed.path in {"/api/portfolio/analysis.xlsx", "/api/portfolio/analysis.pdf"}:
                 from .portfolio_analysis_export import build_analysis_workbook
                 identifier = payload.get("portfolio_id")
                 requested = (parse_qs(parsed.query).get("portfolio_id") or [identifier])[0]
                 if not isinstance(identifier, str) or requested != identifier:
                     raise ValueError("导出组合编号不一致，请重新导出")
                 account = get_portfolio(self.server.app_state.config_store.read(), identifier)
-                filename, content = build_analysis_workbook(account, payload, captured_at=utc_now())
-                self._send_xlsx(filename, content)
+                if parsed.path.endswith('.pdf'):
+                    from .portfolio_analysis_pdf import build_analysis_pdf
+                    filename, content = build_analysis_pdf(account, payload, captured_at=utc_now())
+                    self._send_attachment(filename, content, 'application/pdf', 'STock-portfolio-analysis.pdf')
+                else:
+                    filename, content = build_analysis_workbook(account, payload, captured_at=utc_now())
+                    self._send_xlsx(filename, content)
                 return
             if parsed.path in {"/api/briefings/settings", "/api/briefings/run", "/api/briefings/export"}:
                 monitor = self.server.app_state.briefing_monitor
@@ -2346,6 +2372,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/backtest_core.js": "backtest_core.js",
             "/backtest.js": "backtest.js",
             "/backtest_learning.js": "backtest_learning.js",
+            "/options_core.js": "options_core.js",
+            "/options_learning.js": "options_learning.js",
+            "/options.js": "options.js",
+            "/options.css": "options.css",
             "/assistant.js": "assistant.js",
             "/assistant.css": "assistant.css",
             "/backtest.css": "backtest.css",

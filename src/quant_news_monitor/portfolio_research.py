@@ -1,4 +1,4 @@
-"""On-demand portfolio research, using the existing append-only research ledger."""
+"""Automatic quantitative inputs and on-demand research in the existing research ledger."""
 from __future__ import annotations
 
 import copy
@@ -326,15 +326,26 @@ class PortfolioResearch:
         self.data = rows[0]["payload"] if rows else {"histories": {}, "events": [], "peers": [], "posts": [], "attention": [], "errors": []}
         performance = self.ledger.inputs(self.kind("portfolio_performance"), limit=1)["items"]
         self.performance = performance[0]["payload"] if performance else {"histories": {}, "errors": []}
+        self.performances = {self.performance["year"]: self.performance} if "year" in self.performance else {}
+        analysis = self.ledger.inputs(self.kind("portfolio_analysis_inputs"), limit=1)["items"]
+        self.analysis = analysis[0]["payload"] if analysis else {}
 
     def kind(self, name):
         return name if self.portfolio_id == "default" else name + ":" + self.portfolio_id
 
-    def snapshot(self):
+    def snapshot(self, year=None):
         with self.lock:
             data = copy.deepcopy(self.data)
             data.update(busy=self.busy, error=self.error)
-            data["performance"] = {**copy.deepcopy(self.performance), "busy": self.performance_busy}
+            performance = self.performance if year is None or self.performance.get("year") == year else self.performances.get(year, {"year": year, "histories": {}, "errors": []})
+            data["performance"] = {**copy.deepcopy(performance), "busy": self.performance_busy}
+            for field in ("histories", "funds"):
+                for target, row in self.analysis.get(field, {}).items():
+                    old = data.setdefault(field, {}).get(target, {})
+                    if (row.get("observed_at") or row.get("as_of") or "") >= (old.get("observed_at") or old.get("as_of") or ""):
+                        data[field][target] = copy.deepcopy(row)
+            data["analysis_updated_at"] = self.analysis.get("observed_at")
+            data["analysis_errors"] = list(self.analysis.get("errors", []))
         data["portfolio_id"] = self.portfolio_id
         data["imports"] = [r["payload"] for r in self.ledger.inputs(self.kind("portfolio_research_import"), limit=50)["items"]]
         data["records"] = [r["payload"] for r in self.ledger.inputs(self.kind("portfolio_event_record"), limit=200)["items"]]
@@ -345,6 +356,29 @@ class PortfolioResearch:
             data["attention"] = [r for r in data.get("attention", []) if r.get("platform") not in platforms] + live.pop("rows")
             data["attention_sampling"] = live
         return data
+
+    def ensure_analysis(self, year=None, *, now=None):
+        """Fetch missing/stale inputs; quotes and quantities are recalculated locally by the view."""
+        from .portfolio_book import get_portfolio
+        now = now or datetime.now(timezone.utc)
+        year = now.year if year is None else year
+        if not isinstance(year, int) or isinstance(year, bool) or not 2000 <= year <= now.year:
+            raise ValueError("年份须在2000年至当前年之间")
+        positions = get_portfolio(self.app.config_store.read(), self.portfolio_id).get("positions", [])
+        targets = sorted({":".join(normalize(row["market"], row["symbol"])) for row in positions})
+        with self.lock:
+            if not targets or self.performance_busy:
+                return False
+            previous = self.performance if self.performance.get("year") == year else self.performances.get(year, {})
+            try:
+                age = (now - datetime.fromisoformat(previous.get("observed_at", ""))).total_seconds()
+            except (TypeError, ValueError):
+                age = float("inf")
+            interval = 300 if previous.get("errors") or self.analysis.get("errors") else 1800
+            if (previous.get("year") == year and sorted(previous.get("targets", [])) == targets
+                    and 0 <= age < interval):
+                return False
+            return self.refresh_performance(year)
 
     def refresh_performance(self, year):
         if not isinstance(year, int) or isinstance(year, bool) or not 2000 <= year <= datetime.now(timezone.utc).year:
@@ -371,8 +405,10 @@ class PortfolioResearch:
         if len(targets) > 60:
             raise ValueError("组合分析最多支持60个标的")
         with self.lock:
-            annual_cache = self.performance.get("histories", {}) if self.performance.get("year") == year else {}
-            rolling_cache = self.data.get("histories", {})
+            annual = self.performance if self.performance.get("year") == year else self.performances.get(year, {})
+            annual_cache = annual.get("histories", {})
+            rolling_cache = {**self.data.get("histories", {}), **self.analysis.get("histories", {})}
+            disclosure_cache = self.analysis.get("funds", {})
             peers = self.data.get("peers", [])
         saved_funds = latest_holdings(self.ledger)["payload"]["funds"]
         funds = {target: saved_funds.get(target) or saved_funds.get(row["symbol"])
@@ -396,16 +432,19 @@ class PortfolioResearch:
             position = positions[target]
             is_fund = position["market"] == "FUND" or str(position.get("asset_type") or "").lower() in {"fund", "etf", "etn"}
             is_fund = is_fund or (position["market"] == "CN" and position["symbol"].startswith(("15", "50", "51", "52", "56", "58")))
-            product, disclosure = {}, funds[target]
+            product, disclosure, disclosure_error = {}, funds[target], None
             if is_fund and position["market"] in {"CN", "FUND"} and not (disclosure or {}).get("holdings"):
                 product, disclosure = _export_fund_disclosure(target, now)
-            return annual, annual_error, short, short_error, product, disclosure
+                if not (disclosure or {}).get("holdings"):
+                    disclosure = disclosure_cache.get(target)
+                    disclosure_error = f"{target}：基金底仓披露未更新" + ("，本轮沿用上次可用记录" if (disclosure or {}).get("holdings") else "")
+            return annual, annual_error, short, short_error, product, disclosure, disclosure_error
 
         observed = now.isoformat()
-        performance = {"year": year, "observed_at": observed, "histories": {}, "errors": []}
+        performance = {"year": year, "observed_at": observed, "targets": targets, "histories": {}, "errors": []}
         histories, errors, products, disclosures = {}, [], {}, {}
         with ThreadPoolExecutor(max_workers=4) as executor:
-            for target, (annual, annual_error, short, short_error, product, disclosure) in zip(targets, executor.map(collect, targets)):
+            for target, (annual, annual_error, short, short_error, product, disclosure, disclosure_error) in zip(targets, executor.map(collect, targets)):
                 if annual:
                     performance["histories"][target] = annual
                 if annual_error:
@@ -413,6 +452,8 @@ class PortfolioResearch:
                 histories[target] = short or {"points": []}
                 if short_error:
                     errors.append(short_error)
+                if disclosure_error:
+                    errors.append(disclosure_error)
                 if product:
                     products[target] = product
                 if disclosure:
@@ -424,27 +465,21 @@ class PortfolioResearch:
 
     def _collect_performance(self, year):
         try:
-            from .portfolio_book import get_portfolio
-            positions = get_portfolio(self.app.config_store.read(), self.portfolio_id).get("positions", [])
-            targets = list(dict.fromkeys(":".join(normalize(row["market"], row["symbol"])) for row in positions))
-            if len(targets) > 60:
-                raise ValueError("年度组合分析最多60个标的；未截断持仓")
-            now = datetime.now(timezone.utc)
-            result = {"year": year, "observed_at": now.isoformat(), "targets": targets, "histories": {}, "errors": []}
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                jobs = {executor.submit(fetch_performance_history, target, year, now=now): target for target in targets}
-                for job in as_completed(jobs):
-                    target = jobs[job]
-                    try:
-                        result["histories"][target] = job.result()
-                    except (ValueError, OSError, RuntimeError, KeyError, TypeError, OverflowError) as exc:
-                        result["errors"].append(target + "：" + str(exc))
+            collected = self.prepare_analysis_export(year)
+            result = collected.pop("performance")
+            inputs = {key: collected[key] for key in ("histories", "funds", "products", "observed_at", "errors")}
             self.ledger.observe(self.kind("portfolio_performance"), str(year), result)
+            self.ledger.observe(self.kind("portfolio_analysis_inputs"), "workspace", inputs)
             with self.lock:
                 self.performance = result
+                self.performances[year] = result
+                self.analysis = inputs
         except Exception as exc:
             with self.lock:
-                self.performance = {"year": year, "histories": {}, "errors": [str(exc)], "observed_at": datetime.now(timezone.utc).isoformat()}
+                previous = self.performances.get(year, {})
+                self.performance = {**previous, "year": year, "histories": previous.get("histories", {}),
+                                    "errors": [str(exc)], "observed_at": datetime.now(timezone.utc).isoformat()}
+                self.performances[year] = self.performance
         finally:
             with self.lock:
                 self.performance_busy = False

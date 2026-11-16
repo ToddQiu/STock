@@ -22,7 +22,7 @@ jobs:
       - name: Safe release, unit tests and package
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install .
+          .venv/bin/pip install . pytest pytest-subtests
           PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_hosted*.py' -v
           .venv/bin/python -m unittest discover -s tests -p test_deploy.py -v
           .venv/bin/python -m unittest discover -s tests -p test_portfolio*.py -v

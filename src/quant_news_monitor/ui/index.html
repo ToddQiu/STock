@@ -104,6 +104,9 @@
             <button type="button" class="nav-item" data-backtest-tab="rules" aria-controls="backtest-rules-panel">规则与结果解读</button>
           </div>
         </details>
+        <button class="nav-item" data-view-target="options" type="button">
+          <span class="nav-icon" data-ui-icon="notebook-pen" aria-hidden="true"></span><span>期权学习</span>
+        </button>
         <button class="nav-item" data-view-target="settings" type="button">
           <span class="nav-icon" data-ui-icon="settings" aria-hidden="true"></span><span>设置</span>
         </button>
@@ -649,6 +652,7 @@
           <section id="backtest-rules-panel" class="bt-guide" aria-labelledby="backtest-current-title" hidden></section>
         </section>
         <section class="view" data-view="short-term" id="short-term-workspace"></section>
+        <section class="view" data-view="options" id="options-workspace"></section>
         <section class="view" data-view="research">
           <div class="research-toolbar">
             <h2 id="research-current-title">公司与策略</h2>
@@ -1544,6 +1548,10 @@
   <script src="/backtest_core.js"></script>
   <script src="/backtest_learning.js"></script>
   <script src="/backtest.js"></script>
+  <link rel="stylesheet" href="/options.css">
+  <script src="/options_core.js"></script>
+  <script src="/options_learning.js"></script>
+  <script src="/options.js"></script>
   <link rel="stylesheet" href="/portfolio_books.css">
   <script src="/portfolio_books.js"></script>
   <link rel="stylesheet" href="/portfolio_workspace.css">
